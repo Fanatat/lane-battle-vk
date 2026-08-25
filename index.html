@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Lane Battle — прототип</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #14161c; overflow: hidden;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  #root { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #game { display: block; width: 100%; flex: 1 1 auto; min-height: 0; background: #14161c; }
+
+  #topBar {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; box-sizing: border-box; color: #eee; font-size: 16px;
+    background: #1b1e27;
+  }
+  #foodBar { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  #foodBar .icon { font-size: 18px; }
+  #foodBarTrack {
+    width: 120px; height: 10px; background: #333846; border-radius: 5px; overflow: hidden;
+    margin-left: 4px;
+  }
+  #foodBarFill { height: 100%; width: 0%; background: #e0b23c; transition: width 80ms linear; }
+
+  #speedBtn {
+    flex: 0 0 auto; min-width: 56px; min-height: 40px; border-radius: 10px; border: none;
+    background: #3fa7ff; color: #06121e; font-weight: 700; font-size: 16px; cursor: pointer;
+  }
+  #speedBtn:active { filter: brightness(0.85); }
+
+  #cards {
+    flex: 0 0 auto; display: flex; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    box-sizing: border-box; background: #1b1e27;
+  }
+  .card {
+    flex: 1 1 0; min-height: 64px; border-radius: 10px; border: 2px solid #3a3f4d;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer; position: relative; font-weight: 700;
+    background: #262b36;
+  }
+  .card .letter { font-size: 22px; }
+  .card .cost { font-size: 13px; opacity: 0.85; font-weight: 400; }
+  .card.disabled { opacity: 0.45; }
+  .card.shake { animation: cardShake var(--shake-ms, 150ms) linear; }
+  @keyframes cardShake {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+    100% { transform: translateX(0); }
+  }
+
+  #popup {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.6); z-index: 20;
+  }
+  #popup.hidden { display: none; }
+  #popupBox {
+    background: #1b1e27; color: #fff; border-radius: 16px; padding: 28px 32px;
+    text-align: center; min-width: 260px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  #popupTitle { margin: 0 0 12px; font-size: 28px; }
+  #popupStats { margin: 0 0 20px; font-size: 15px; line-height: 1.6; color: #ccc; white-space: pre-line; }
+  #restartBtn {
+    min-width: 140px; min-height: 44px; border-radius: 10px; border: none;
+    background: #5fd15f; color: #06210a; font-weight: 700; font-size: 16px; cursor: pointer;
+  }
+
+  #devPanel.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="root">
+    <div id="topBar">
+      <div id="foodBar">
+        <span class="icon">🍖</span>
+        <span id="foodValue">0</span>/<span id="foodCap">0</span>
+        <div id="foodBarTrack"><div id="foodBarFill"></div></div>
+      </div>
+      <button id="speedBtn">×1</button>
+    </div>
+
+    <canvas id="game"></canvas>
+
+    <div id="cards">
+      <div class="card disabled" id="card-A"><div class="letter">A</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-B"><div class="letter">B</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-C"><div class="letter">C</div><div class="cost">—</div></div>
+    </div>
+  </div>
+
+  <div id="popup" class="hidden">
+    <div id="popupBox">
+      <h1 id="popupTitle">—</h1>
+      <p id="popupStats"></p>
+      <button id="restartBtn">Ещё раз</button>
+    </div>
+  </div>
+
+  <div id="devPanel" class="hidden"></div>
+
+  <script src="main.js"></script>
+  <script src="dev.js"></script>
+</body>
+</html>

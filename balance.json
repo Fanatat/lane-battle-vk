@@ -1,0 +1,63 @@
+{
+  "_comment": "Все числа боя — здесь. Юниты не подряд файла main.js. Скорости/дистанции в 'uw' = unit-widths: множитель размера юнита, который в рантайме считается как canvasHeight/8 (жёсткое требование ТЗ), поэтому бой одинаково читается на любом разрешении.",
+
+  "units": {
+    "A": { "label": "A", "role": "спам", "hp": 20, "damage": 9, "attack_speed": 0.55, "speed_uw": 1.1, "cost": 8, "color": "#3fa7ff" },
+    "B": { "label": "B", "role": "база армии", "hp": 55, "damage": 15, "attack_speed": 0.85, "speed_uw": 0.8, "cost": 18, "color": "#5fd15f" },
+    "C": { "label": "C", "role": "таран", "hp": 130, "damage": 26, "attack_speed": 1.3, "speed_uw": 0.5, "cost": 40, "color": "#e0763c" }
+  },
+
+  "geometry": {
+    "queue_gap_uw": 1.05,
+    "attack_range_uw": 1.1,
+    "siege_range_uw": 1.15,
+    "unit_height_screen_fraction": 0.125
+  },
+
+  "player": {
+    "base_hp": 500,
+    "production_rate": 7,
+    "food_cap": 90,
+    "food_start": 16
+  },
+
+  "enemy": {
+    "base_hp": 260,
+    "schedule": [
+      { "time": 3,  "type": "A", "count": 2 },
+      { "time": 9,  "type": "A", "count": 2 },
+      { "time": 15, "type": "A", "count": 3 },
+      { "time": 22, "type": "A", "count": 2 },
+      { "time": 22, "type": "B", "count": 1 },
+      { "time": 29, "type": "A", "count": 3 },
+      { "time": 36, "type": "B", "count": 2 },
+      { "time": 43, "type": "A", "count": 3 },
+      { "time": 43, "type": "B", "count": 1 },
+      { "time": 50, "type": "B", "count": 2 },
+      { "time": 50, "type": "C", "count": 1 },
+      { "time": 57, "type": "A", "count": 3 },
+      { "time": 64, "type": "C", "count": 1 },
+      { "time": 64, "type": "B", "count": 2 }
+    ]
+  },
+
+  "speed_levels": [1, 2, 3],
+
+  "juice": {
+    "spawn_squash_ms": 120,
+    "spawn_squash_scale": 1.3,
+    "hit_flash_ms": 60,
+    "damage_number_rise_px": 40,
+    "damage_number_ms": 400,
+    "death_hitstop_ms": 60,
+    "death_shake_px": 3,
+    "death_shake_ms": 120,
+    "base_hit_shake_px": 6,
+    "base_hit_shake_ms": 150,
+    "base_destroy_hitstop_ms": 200,
+    "base_destroy_shake_px": 10,
+    "base_destroy_shake_ms": 300,
+    "card_shake_px": 6,
+    "card_shake_ms": 150
+  }
+}
