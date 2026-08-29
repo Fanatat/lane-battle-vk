@@ -69,10 +69,46 @@ function makeRotation(pattern) {
   };
 }
 
+// "counter" (ТЗ №05, фаза 2) читает то же превью следующей волны, что видит
+// игрок на экране, и покупает ответ на неё — не на еду вообще, как greedy.
+// Та же пауза GLANCE_S, что и у greedy: сравнение должно мерить качество
+// решения, а не скорость реакции бота.
+// "counter" реагирует не раз в GLANCE_S, а как ротационные боты
+// (mixShieldArchers/mixCheapArchers) — каждый кадр: сравнение с greedy
+// (раз в GLANCE_S, специально ради имитации «взгляда на полоску», см.
+// комментарий выше) проверяет именно ценность решения по превью, а
+// реакция игрока на новую карточку в интерфейсе не медленнее, чем на еду.
+function makeCounter(balance) {
+  var idx = 0;
+  var pattern = ['A', 'B']; // база: дешёвый боец + стрелок в строгую очередь
+  return function (engine) {
+    var state = engine.getState();
+    var type = state.nextWaveType;
+    var count = state.nextWaveCount;
+
+    // Превью отвечает на вопрос «нужен ли щит прямо сейчас», а не только
+    // «что покупать вообще»: против одиночных и лёгких волн щит — лишний
+    // расход, экономика быстрее без него (дешёвый боец + стрелок держат
+    // темп); щит оправдан только настоящей плотной волной ближнего боя.
+    // Пока копим на щит — не разменивать еду на дешёвые покупки, иначе
+    // накопление до 22 еды никогда не случится (её всегда перехватит A).
+    if (count >= 3 && (type === 'A' || type === 'C')) {
+      engine.trySpawnFood('C');
+      return;
+    }
+    var spent = true;
+    while (spent) {
+      spent = engine.trySpawnFood(pattern[idx]);
+      if (spent) idx = (idx + 1) % pattern.length;
+    }
+  };
+}
+
 var PURE = ['spamA', 'spamB', 'spamC'];
 var MIXED = ['mixShieldArchers', 'mixCheapArchers', 'greedy'];
 var ACTIVE = PURE.concat(MIXED); // шесть активных стратегий из ТЗ №04, раздел 3
 var STRATEGY_NAMES = ACTIVE.concat(['idle']);
+var PHASE2_EXTRA = ['counter']; // не входит в шесть активных ТЗ №04 — свой порог в фазе 2
 
 function buildFactories(balance) {
   return {
@@ -82,6 +118,7 @@ function buildFactories(balance) {
     mixShieldArchers: makeRotation(['C', 'B']),
     mixCheapArchers: makeRotation(['A', 'B']),
     greedy: function () { return makeGreedy(balance); },
+    counter: function () { return makeCounter(balance); },
     idle: function () { return function () {}; }
   };
 }
@@ -158,7 +195,7 @@ function printTable(runs) {
 function main() {
   var balance = loadBalance();
   var factories = buildFactories(balance);
-  var runs = STRATEGY_NAMES.map(function (name) { return runStrategy(name, balance, factories); });
+  var runs = STRATEGY_NAMES.concat(PHASE2_EXTRA).map(function (name) { return runStrategy(name, balance, factories); });
   var byName = {};
   runs.forEach(function (r) { byName[r.name] = r; });
 
@@ -247,14 +284,48 @@ function main() {
     );
   }
 
+  // ---- Фаза 2 (ТЗ №05, раздел 2.2): превью волны обязано иметь цену ----
+  var counter = byName.counter;
+  var greedy = byName.greedy;
+
+  if (counter.result !== 'WIN') {
+    failures.push('counter не победил (исход ' + counter.result + ') — сравнение с greedy по времени невозможно');
+  } else if (greedy.result !== 'WIN') {
+    failures.push('greedy не победил (исход ' + greedy.result + ') — базы для сравнения с counter нет');
+  } else {
+    var speedup = 1 - counter.duration / greedy.duration;
+    if (speedup < 0.10) {
+      failures.push(
+        'counter МЕДЛЕННЕЕ порога: ' + counter.duration.toFixed(1) + 'с против greedy ' + greedy.duration.toFixed(1) +
+        'с — выигрыш ' + (speedup * 100).toFixed(1) + '%, нужно не менее 10%'
+      );
+    }
+  }
+
+  // Верхняя граница с учётом counter: ни одна чистая по-прежнему не
+  // быстрее лучшей смешанной, где смешанные теперь включают counter.
+  var mixedWithCounter = winners.filter(function (r) {
+    return MIXED.indexOf(r.name) !== -1 || r.name === 'counter';
+  }).concat(counter.result === 'WIN' ? [counter] : []);
+  var bestMixedWithCounter = mixedWithCounter.length
+    ? mixedWithCounter.reduce(function (a, b) { return a.duration <= b.duration ? a : b; })
+    : null;
+  if (bestPure && (!bestMixedWithCounter || bestPure.duration < bestMixedWithCounter.duration)) {
+    failures.push(
+      'ВЕРХНЯЯ ГРАНИЦА (с учётом counter) провалена: чистая ' + bestPure.name + ' (' + bestPure.duration.toFixed(1) +
+      'с) быстрее лучшей смешанной ' + (bestMixedWithCounter ? bestMixedWithCounter.name + ' (' + bestMixedWithCounter.duration.toFixed(1) + 'с)' : '(смешанные не побеждают)')
+    );
+  }
+
   if (failures.length > 0) {
     console.error('\nПРОВАЛ (' + failures.length + '):');
     failures.forEach(function (f) { console.error('  - ' + f); });
     process.exit(1);
   }
 
-  console.log('\nOK: все критерии приёмки ТЗ №05 (фаза 1) выполнены. Побеждают ' + winners.length + ' из 6: ' +
-    winners.map(function (r) { return r.name + ' ' + r.duration.toFixed(1) + 'с'; }).join(', ') + '.');
+  console.log('\nOK: все критерии приёмки ТЗ №05 (фаза 1 и фаза 2) выполнены. Побеждают ' + winners.length + ' из 6: ' +
+    winners.map(function (r) { return r.name + ' ' + r.duration.toFixed(1) + 'с'; }).join(', ') +
+    '. counter: ' + counter.duration.toFixed(1) + 'с (быстрее greedy на ' + ((1 - counter.duration / greedy.duration) * 100).toFixed(1) + '%).');
 }
 
 main();

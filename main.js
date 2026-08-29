@@ -282,6 +282,7 @@
 
     drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, balance.sides.player, 'ИГРОК', 'left');
     drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, balance.sides.enemy, 'ВРАГ', 'right');
+    drawWavePreview(state);
 
     for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], balance.sides.player);
     for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], balance.sides.enemy);
@@ -328,6 +329,52 @@
         ctx.fillText(text, x + w, y - 2);
       }
     }
+  }
+
+  // Превью следующей волны (фаза 2 ТЗ №05): те же силуэты, что у юнитов на
+  // поле, плюс таймер — над вражеской базой, выше её полосы HP, чтобы не
+  // перекрывать ни базу, ни лейн боя.
+  function drawWavePreview(state) {
+    if (!state.nextWaveType) return;
+    var p = balance.wave_preview;
+    var size = layout.unitSize;
+    var spec = balance.units[state.nextWaveType];
+    var side = balance.sides.enemy;
+    var cy = layout.enemyBase.y - size * p.y_offset_uw;
+    var iconSize = size * p.icon_scale;
+    var iconCount = state.nextWaveCount >= 2 ? 2 : 1;
+    var gap = size * p.icon_gap_uw;
+    // Группа растёт влево от правого края базы (минус небольшой отступ),
+    // а не центрируется на базе — иначе у самого правого края канваса
+    // второй значок срезается рамкой экрана.
+    var rightEdge = layout.enemyBase.x + layout.enemyBase.w - size * p.right_margin_uw;
+    var lastIconCx = rightEdge - iconSize / 2;
+    var startX = lastIconCx - (iconCount - 1) * gap;
+    var cx = startX + ((iconCount - 1) * gap) / 2;
+
+    for (var i = 0; i < iconCount; i++) {
+      var ix = startX + i * gap;
+      var x = ix - iconSize / 2;
+      var y = cy - iconSize / 2;
+      pathUnitShape(spec.shape, x, y, iconSize, iconSize);
+      ctx.fillStyle = side.fill;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.lineWidth = Math.max(1, size * 0.03);
+      ctx.stroke();
+      ctx.fillStyle = side.text;
+      ctx.font = 'bold ' + Math.round(size * p.font_scale_icon) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(state.nextWaveType, ix, y + iconSize / 2 + iconSize * 0.08);
+    }
+
+    var secondsLeft = Math.max(0, Math.ceil(state.nextWaveTime - state.timeElapsed));
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold ' + Math.round(size * p.font_scale_timer) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(secondsLeft + 'с', cx, cy + iconSize / 2 + size * 0.08);
   }
 
   // Форма — единственный несущий тип-сигнал в отрисовке юнита (плюс буква):

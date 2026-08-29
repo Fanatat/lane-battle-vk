@@ -53,6 +53,15 @@
     "siege_range_uw": 1.15,
     "unit_height_screen_fraction": 0.125
   },
+  "wave_preview": {
+    "_comment": "Фаза 2 ТЗ №05: индикатор следующей волны над вражеской базой — те же силуэты, что у юнитов на поле, плюс таймер. Группа значков растёт влево от правого края базы (см. main.js), чтобы не срезаться правым краем канваса.",
+    "icon_scale": 0.42,
+    "icon_gap_uw": 0.46,
+    "y_offset_uw": 1.55,
+    "right_margin_uw": 0.1,
+    "font_scale_icon": 0.26,
+    "font_scale_timer": 0.22
+  },
   "player": {
     "base_hp": 300,
     "production_rate": 2.2,

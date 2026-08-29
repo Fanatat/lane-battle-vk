@@ -83,7 +83,7 @@
         dpsAccum: 0, dpsLastSecond: 0, dpsSecondFloor: 0,
         foodFullTime: 0, minPlayerBaseHp: 0,
         nextEndlessTime: 0, endlessWaveIndex: 0,
-        nextWaveType: null, nextWaveTime: null
+        nextWaveType: null, nextWaveTime: null, nextWaveCount: null
       };
     }
 
@@ -101,7 +101,11 @@
       state.nextEndlessTime = (sched.length ? sched[sched.length - 1].time : 0) +
         (balance.enemy.endless ? balance.enemy.endless.interval_start_s : 0);
       state.endlessWaveIndex = 0;
-      if (sched.length) { state.nextWaveType = sched[0].type; state.nextWaveTime = sched[0].time; }
+      if (sched.length) {
+        state.nextWaveType = sched[0].type;
+        state.nextWaveTime = sched[0].time;
+        state.nextWaveCount = sched[0].count;
+      }
     }
 
     function endBattle(result) {
@@ -225,12 +229,16 @@
       if (state.scheduleIndex < sched.length) {
         state.nextWaveType = sched[state.scheduleIndex].type;
         state.nextWaveTime = sched[state.scheduleIndex].time;
+        state.nextWaveCount = sched[state.scheduleIndex].count;
         return;
       }
       var endless = balance.enemy.endless;
-      if (!endless) { state.nextWaveType = null; state.nextWaveTime = null; return; }
-      state.nextWaveType = endless.pattern[state.endlessWaveIndex % endless.pattern.length];
+      if (!endless) { state.nextWaveType = null; state.nextWaveTime = null; state.nextWaveCount = null; return; }
+      var waveIndex = state.endlessWaveIndex;
+      state.nextWaveType = endless.pattern[waveIndex % endless.pattern.length];
       state.nextWaveTime = state.nextEndlessTime;
+      var extra = Math.min(endless.count_growth_max, Math.floor(waveIndex / endless.count_growth_every_n_waves));
+      state.nextWaveCount = endless.count_base + extra;
     }
 
     function buildOrder(pool, order, descending) {
