@@ -23,7 +23,7 @@
     laneY: 0,
     playerBase: { x: 0, y: 0, w: 0, h: 0, frontX: 0 },
     enemyBase: { x: 0, y: 0, w: 0, h: 0, frontX: 0 },
-    playerSpawnX: 0, enemySpawnX: 0
+    playerReinforceX: 0, enemyReinforceX: 0, reinforceOffsetPx: 0
   };
 
   function makeDmgPool(size) {
@@ -107,8 +107,16 @@
     layout.enemyBase.y = layout.laneY - baseHeight / 2;
     layout.enemyBase.frontX = cssW - margin - baseWidth;
 
-    layout.playerSpawnX = layout.playerBase.frontX + unitSize * 0.5;
-    layout.enemySpawnX = layout.enemyBase.frontX - unitSize * 0.5;
+    // Дистанция подкрепления (ТЗ №06, блок 1) — та же формула, что в
+    // engine.js computeLayout, чтобы браузер и headless-прогон не расходились.
+    var laneLengthPx = layout.enemyBase.frontX - layout.playerBase.frontX;
+    var reinforceOffsetPx = Math.min(
+      balance.geometry.reinforce_offset_uw * unitSize,
+      laneLengthPx * 0.2
+    );
+    layout.reinforceOffsetPx = reinforceOffsetPx;
+    layout.playerReinforceX = layout.playerBase.frontX + reinforceOffsetPx;
+    layout.enemyReinforceX = layout.enemyBase.frontX - reinforceOffsetPx;
 
     // reposition existing units proportionally so a mid-battle resize (e.g. rotate) doesn't break the lane
     var newLaneWidth = layout.enemyBase.frontX - layout.playerBase.frontX;

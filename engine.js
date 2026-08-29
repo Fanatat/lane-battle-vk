@@ -41,13 +41,24 @@
       laneY: cssH / 2,
       playerBase: { x: margin, y: 0, w: baseWidth, h: baseHeight, frontX: margin + baseWidth },
       enemyBase: { x: 0, y: 0, w: baseWidth, h: baseHeight, frontX: cssW - margin - baseWidth },
-      playerSpawnX: 0, enemySpawnX: 0
+      playerReinforceX: 0, enemyReinforceX: 0, reinforceOffsetPx: 0
     };
     layout.playerBase.y = layout.laneY - baseHeight / 2;
     layout.enemyBase.x = cssW - margin - baseWidth;
     layout.enemyBase.y = layout.laneY - baseHeight / 2;
-    layout.playerSpawnX = layout.playerBase.frontX + unitSize * 0.5;
-    layout.enemySpawnX = layout.enemyBase.frontX - unitSize * 0.5;
+
+    // Дистанция подкрепления (ТЗ №06, блок 1): точка появления купленного
+    // юнита отодвинута от двери базы на reinforce_offset_uw, но не более
+    // 20% длины полосы — на узких/квадратных экранах офсет в uw не должен
+    // съедать почти всю полосу.
+    var laneLengthPx = layout.enemyBase.frontX - layout.playerBase.frontX;
+    var reinforceOffsetPx = Math.min(
+      geometry.reinforce_offset_uw * unitSize,
+      laneLengthPx * 0.2
+    );
+    layout.reinforceOffsetPx = reinforceOffsetPx;
+    layout.playerReinforceX = layout.playerBase.frontX + reinforceOffsetPx;
+    layout.enemyReinforceX = layout.enemyBase.frontX - reinforceOffsetPx;
     return layout;
   }
 
@@ -147,11 +158,11 @@
       var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
       var x;
       if (isPlayer) {
-        x = layout.playerSpawnX;
+        x = layout.playerReinforceX;
         var minX = minActiveX(playerUnits);
         if (minX !== null && minX - x < gapPx) x = minX - gapPx;
       } else {
-        x = layout.enemySpawnX;
+        x = layout.enemyReinforceX;
         var maxX = maxActiveX(enemyUnits);
         if (maxX !== null && x - maxX < gapPx) x = maxX + gapPx;
       }
@@ -332,6 +343,14 @@
         var ownRangePx = isRanged ? spec.range_uw * layout.unitSize : meleeRangePx;
         var found = nearestEnemy(u, otherPool);
         var ahead = i > 0 ? order[i - 1] : null;
+        // Дистанция подкрепления (ТЗ №06, блок 1): юнит идёт к БЛИЖАЙШЕМУ
+        // врагу, а не всегда вперёд к базе противника — прорвавшийся враг,
+        // оказавшийся позади точки подкрепления, тянет свежих защитников
+        // назад, к своей базе. moveDir совпадает с исходным «вперёд» (dir)
+        // в подавляющем большинстве тиков; ahead-клэмп (держит очередь) имеет
+        // смысл только в этом случае — иначе он привязывает юнита к соседу,
+        // идущему в другую сторону, и клинит движение.
+        var moveDir = found ? (Math.sign(found.unit.x - u.x) || dir) : dir;
         if (found && found.dist <= ownRangePx) {
           u.state = 'ATTACK';
           if (u.cooldown <= 0) {
@@ -346,8 +365,8 @@
           // "остановился в своей дистанции — дальше не идёт" не трогается.
           if (!isRanged && found.dist > contactRangePx) {
             var advancePx = spec.speed_uw * layout.unitSize;
-            var ax = u.x + dir * advancePx * dt;
-            if (ahead) {
+            var ax = u.x + moveDir * advancePx * dt;
+            if (ahead && moveDir === dir) {
               if (isPlayer) ax = Math.min(ax, ahead.x - gapPx);
               else ax = Math.max(ax, ahead.x + gapPx);
             }
@@ -358,8 +377,8 @@
 
         u.state = 'MOVE';
         var speedPx = spec.speed_uw * layout.unitSize;
-        var nx = u.x + dir * speedPx * dt;
-        if (ahead) {
+        var nx = u.x + moveDir * speedPx * dt;
+        if (ahead && moveDir === dir) {
           if (isPlayer) nx = Math.min(nx, ahead.x - gapPx);
           else nx = Math.max(nx, ahead.x + gapPx);
         }
