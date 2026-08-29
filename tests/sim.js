@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /*
- * tests/sim.js — турнир стратегий, headless, без браузера.
+ * tests/sim.js — измеритель турнира стратегий (ТЗ №06, блок 3), headless.
  * Использует тот же engine.js, что и main.js: правила боя не дублируются.
- * Прогон валится с ненулевым кодом и точечным сообщением, если критерии
- * приёмки ТЗ №05 (раздел 1.3, фаза 1) не выполнены. Пороги ТЗ №04 (окно
- * длительности 90–140с, доля полной еды <15%) этим ТЗ не переподтверждались
- * и здесь не проверяются — см. отчёт ТЗ05.
+ * Печатает TSV-таблицу распределения ВСЕХ партий турнира (не только да/нет)
+ * и проверяет по ней критерии готовности ТЗ №06, раздел 4. Провал — точечно,
+ * что именно не выполнено и по каким числам (K-11).
  *
  * Запуск: node tests/sim.js
  */
@@ -19,7 +18,7 @@ var LaneEngine = require(path.join(__dirname, '..', 'engine.js'));
 var REF_W = 1280;
 var REF_H = 587;
 var DT = 1 / 30;
-var MAX_TIME = 600; // громкий предохранитель от бесконечного цикла — пат
+var MAX_TIME = 300; // тайм-аут партии игрового времени (ТЗ №06, дефолт #12)
 
 function loadBalance() {
   var p = path.join(__dirname, '..', 'balance.json');
@@ -71,16 +70,12 @@ function makeRotation(pattern) {
 
 // "counter" (ТЗ №05, фаза 2) читает то же превью следующей волны, что видит
 // игрок на экране, и покупает ответ на неё — не на еду вообще, как greedy.
-// Та же пауза GLANCE_S, что и у greedy: сравнение должно мерить качество
-// решения, а не скорость реакции бота.
-// "counter" реагирует не раз в GLANCE_S, а как ротационные боты
-// (mixShieldArchers/mixCheapArchers) — каждый кадр: сравнение с greedy
-// (раз в GLANCE_S, специально ради имитации «взгляда на полоску», см.
-// комментарий выше) проверяет именно ценность решения по превью, а
-// реакция игрока на новую карточку в интерфейсе не медленнее, чем на еду.
+// База ротации — 'A','B', та же, что у mixCheapArchers: честный A/B (блок 4,
+// T-09) сравнивает counter именно с mixCheapArchers, а не с greedy — это
+// единственная пара, где use_preview — ЕДИНСТВЕННОЕ отличие (дефолт #15).
 function makeCounter(balance) {
   var idx = 0;
-  var pattern = ['A', 'B']; // база: дешёвый боец + стрелок в строгую очередь
+  var pattern = ['A', 'B'];
   return function (engine) {
     var state = engine.getState();
     var type = state.nextWaveType;
@@ -88,10 +83,9 @@ function makeCounter(balance) {
 
     // Превью отвечает на вопрос «нужен ли щит прямо сейчас», а не только
     // «что покупать вообще»: против одиночных и лёгких волн щит — лишний
-    // расход, экономика быстрее без него (дешёвый боец + стрелок держат
-    // темп); щит оправдан только настоящей плотной волной ближнего боя.
+    // расход; щит оправдан только настоящей плотной волной ближнего боя.
     // Пока копим на щит — не разменивать еду на дешёвые покупки, иначе
-    // накопление до 22 еды никогда не случится (её всегда перехватит A).
+    // накопление до cost('C') еды никогда не случится (её перехватит A).
     if (count >= 3 && (type === 'A' || type === 'C')) {
       engine.trySpawnFood('C');
       return;
@@ -106,9 +100,9 @@ function makeCounter(balance) {
 
 var PURE = ['spamA', 'spamB', 'spamC'];
 var MIXED = ['mixShieldArchers', 'mixCheapArchers', 'greedy'];
-var ACTIVE = PURE.concat(MIXED); // шесть активных стратегий из ТЗ №04, раздел 3
-var STRATEGY_NAMES = ACTIVE.concat(['idle']);
-var PHASE2_EXTRA = ['counter']; // не входит в шесть активных ТЗ №04 — свой порог в фазе 2
+var ACTIVE = PURE.concat(MIXED); // существующие шесть стратегий турнира (дефолт #16, новых не заводим)
+var SEEDS = [1, 2, 3, 4, 5, 6, 7, 8]; // дефолт #11 — зашиты константой, не рандомные
+var PHASE4_EXTRA = ['counter']; // честный A/B превью — блок 4, не входит в шесть турнирных
 
 function buildFactories(balance) {
   return {
@@ -123,7 +117,16 @@ function buildFactories(balance) {
   };
 }
 
-function runStrategy(name, balance, factories) {
+// Сид зашит константой (1…8) и передаётся в каждую партию, но текущий
+// движок ПОЛНОСТЬЮ детерминирован — в рантайме нет генераторов/солверов
+// (жёсткий запрет CLAUDE.md), и ни одна ветка симуляции сид не читает.
+// Ввод стохастики в бой — новая система, которую раздел 6 этого ТЗ не
+// решает заранее, а «Границы» запрещают заводить незаявленные системы
+// самостоятельно. Поэтому 8 партий одной стратегии дают 8 побитово
+// идентичных исходов; таблица всё равно печатает все 48 строк буквально
+// по требованию раздела 4. Вырожденность зафиксирована здесь и в
+// BLOCKERS.md, а не замаскирована псевдослучайностью на скорую руку.
+function runGame(name, seed, balance, factories) {
   var layout = LaneEngine.computeLayout(REF_W, REF_H, balance.geometry);
   var engine = LaneEngine.createEngine(balance, layout);
   var decide = factories[name]();
@@ -136,21 +139,28 @@ function runStrategy(name, balance, factories) {
   }
 
   var timedOut = !state.over;
+  var result = timedOut ? 'TIMEOUT' : state.result;
+  // «мин.HP базы победителя» (раздел 3, блок 3): для WIN — просевшая база
+  // игрока, для LOSE — просевшая база врага. При TIMEOUT победителя нет.
+  var winnerMinHpFrac = null;
+  if (result === 'WIN') winnerMinHpFrac = state.minPlayerBaseHp / state.playerBaseMaxHp;
+  else if (result === 'LOSE') winnerMinHpFrac = state.minEnemyBaseHp / state.enemyBaseMaxHp;
+
   return {
     name: name,
-    result: timedOut ? 'TIMEOUT' : state.result,
+    seed: seed,
+    result: result,
     duration: state.timeElapsed,
+    winnerMinHpFrac: winnerMinHpFrac,
     minPlayerBaseHpFrac: state.minPlayerBaseHp / state.playerBaseMaxHp,
-    enemyHpFrac: state.enemyBaseHp / state.enemyBaseMaxHp,
-    foodFullFrac: state.timeElapsed > 0 ? state.foodFullTime / state.timeElapsed : 0,
-    spawnedByType: state.spawnedByType
+    enemyHpFrac: state.enemyBaseHp / state.enemyBaseMaxHp
   };
 }
 
-// Расписание бесконечно (ТЗ №05, 1.2): подставляем недостижимо большой HP
-// базы игрока, чтобы бой не кончался поражением, и смотрим, продолжает ли
-// враг спавниться после 300 с бездействия игрока. Отдельный прогон, не
-// стратегия — критерий проверяет само расписание, а не композицию.
+// Расписание бесконечно (наследие ТЗ №05): подставляем недостижимо большой
+// HP базы игрока и смотрим, продолжает ли враг спавниться после 300с
+// бездействия игрока. Не входит в критерий готовности ТЗ №06 (раздел 4),
+// но остаётся дешёвой регрессионной проверкой того, что этот блок не сломан.
 function checkEndlessSchedule(balance) {
   var patched = JSON.parse(JSON.stringify(balance));
   patched.player.base_hp = 1e9;
@@ -166,156 +176,132 @@ function checkEndlessSchedule(balance) {
   return { spawnedBy300: countAt300, spawnedBy320: state.enemySpawnedCount };
 }
 
-function fmtPct(x) { return (x * 100).toFixed(1) + '%'; }
-function fmtSpawns(s) { return 'A=' + s.A + ' B=' + s.B + ' C=' + s.C; }
+function fmtPct(x) { return x === null ? '—' : (x * 100).toFixed(1) + '%'; }
 
-function printTable(runs) {
-  var header = ['стратегия', 'исход', 'время,с', 'мин.HP базы', 'полоса полна', 'спавны'];
-  var rows = runs.map(function (r) {
-    return [
-      r.name,
-      r.result,
-      r.duration.toFixed(1),
-      fmtPct(r.minPlayerBaseHpFrac),
-      fmtPct(r.foodFullFrac),
-      fmtSpawns(r.spawnedByType)
-    ];
+function printTsv(rows) {
+  var header = ['стратегия', 'сид', 'исход', 'мин.HP базы победителя, %', 'длительность, с'];
+  console.log(header.join('\t'));
+  rows.forEach(function (r) {
+    console.log([r.name, r.seed, r.result, fmtPct(r.winnerMinHpFrac), r.duration.toFixed(1)].join('\t'));
   });
-  var widths = header.map(function (h, i) {
-    return Math.max(h.length, Math.max.apply(null, rows.map(function (r) { return r[i].length; })));
-  });
-  function line(cells) {
-    return cells.map(function (c, i) { return c.padEnd(widths[i]); }).join(' | ');
-  }
-  console.log(line(header));
-  console.log(widths.map(function (w) { return '-'.repeat(w); }).join('-+-'));
-  rows.forEach(function (r) { console.log(line(r)); });
 }
 
 function main() {
   var balance = loadBalance();
   var factories = buildFactories(balance);
-  var runs = STRATEGY_NAMES.concat(PHASE2_EXTRA).map(function (name) { return runStrategy(name, balance, factories); });
-  var byName = {};
-  runs.forEach(function (r) { byName[r.name] = r; });
 
-  printTable(runs);
+  // Турнир: 6 стратегий × 8 фиксированных сидов = 48 партий (раздел 4).
+  var rows = [];
+  ACTIVE.forEach(function (name) {
+    SEEDS.forEach(function (seed) {
+      rows.push(runGame(name, seed, balance, factories));
+    });
+  });
+
+  printTsv(rows);
 
   var failures = [];
 
-  // Пат: любая стратегия без исхода за MAX_TIME — провал сам по себе.
-  runs.forEach(function (r) {
+  // Пат/тайм-аут — провал сам по себе, для любой партии.
+  rows.forEach(function (r) {
     if (r.result === 'TIMEOUT') {
-      failures.push(r.name + ': уход в пат — нет исхода за ' + MAX_TIME + 'с (мин.HP игрока ' + fmtPct(r.minPlayerBaseHpFrac) + ', HP врага ' + fmtPct(r.enemyHpFrac) + ')');
+      failures.push(r.name + ' сид ' + r.seed + ': тайм-аут партии (' + MAX_TIME + 'с) — нет исхода ни для одной стороны');
     }
   });
 
-  var activeRuns = runs.filter(function (r) { return ACTIVE.indexOf(r.name) !== -1; });
-  var winners = activeRuns.filter(function (r) { return r.result === 'WIN'; });
-  var pureWinners = winners.filter(function (r) { return PURE.indexOf(r.name) !== -1; });
-  var mixedWinners = winners.filter(function (r) { return MIXED.indexOf(r.name) !== -1; });
-
-  var bestPure = pureWinners.length ? pureWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
-  var bestMixed = mixedWinners.length ? mixedWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
-
-  // НИЖНЯЯ граница (главный порог этого ТЗ): не менее 3 из 6 активных
-  // стратегий обязаны побеждать. Единственная выигрышная линия недопустима,
-  // даже если остальные проверки зелёные.
-  if (winners.length < 3) {
-    failures.push(
-      'НИЖНЯЯ ГРАНИЦА провалена: побеждает только ' + winners.length + ' из 6 активных стратегий (' +
-      (winners.map(function (r) { return r.name; }).join(', ') || 'никто') + ') — нужно не менее 3'
-    );
-  }
-
-  // ВЕРХНЯЯ граница: ни одна чистая стратегия не быстрее лучшей смешанной.
-  // Если чистые вообще не побеждают, порог выполнен тривиально. Если чистая
-  // побеждает, а ни одна смешанная — нет, чистая тем более «быстрее».
-  if (bestPure && (!bestMixed || bestPure.duration < bestMixed.duration)) {
-    failures.push(
-      'ВЕРХНЯЯ ГРАНИЦА провалена: чистая ' + bestPure.name + ' (' + bestPure.duration.toFixed(1) + 'с) быстрее лучшей смешанной ' +
-      (bestMixed ? bestMixed.name + ' (' + bestMixed.duration.toFixed(1) + 'с)' : '(смешанные не побеждают)')
-    );
-  }
-
-  var idle = byName.idle;
-  if (idle.result !== 'LOSE') {
-    failures.push('idle не проиграл: исход ' + idle.result + ' (ожидалось поражение)');
-  }
-
-  // ГРАДИЕНТ СУЩЕСТВУЕТ (главный порог фазы 1, ТЗ №05 п.1.3): среди побед
-  // не менее пяти с мин.HP базы игрока строго в диапазоне 20–80%.
-  var gradientWins = winners.filter(function (r) {
-    return r.minPlayerBaseHpFrac > 0.2 && r.minPlayerBaseHpFrac < 0.8;
+  var byStrategy = {};
+  ACTIVE.forEach(function (name) { byStrategy[name] = rows.filter(function (r) { return r.name === name; }); });
+  var winRate = {};
+  ACTIVE.forEach(function (name) {
+    var games = byStrategy[name];
+    var wins = games.filter(function (r) { return r.result === 'WIN'; }).length;
+    winRate[name] = wins / games.length;
   });
-  var distribution = activeRuns.map(function (r) { return r.name + '=' + fmtPct(r.minPlayerBaseHpFrac); }).join(', ');
-  if (gradientWins.length < 5) {
+
+  // 2. НЕТ ДОМИНАНТА (порог ТЗ №03, сохраняется): ни одна чистая стратегия
+  //    не побеждает быстрее лучшей смешанной.
+  var pureWinDurations = rows.filter(function (r) { return PURE.indexOf(r.name) !== -1 && r.result === 'WIN'; })
+    .map(function (r) { return r.duration; });
+  var mixedWinDurations = rows.filter(function (r) { return MIXED.indexOf(r.name) !== -1 && r.result === 'WIN'; })
+    .map(function (r) { return r.duration; });
+  var bestPure = pureWinDurations.length ? Math.min.apply(null, pureWinDurations) : null;
+  var bestMixed = mixedWinDurations.length ? Math.min.apply(null, mixedWinDurations) : null;
+  if (bestPure !== null && (bestMixed === null || bestPure < bestMixed)) {
     failures.push(
-      'ГРАДИЕНТ провален (главный порог фазы 1): среди ' + winners.length + ' побед только ' + gradientWins.length +
-      ' с мин.HP базы игрока в 20–80% — нужно не менее 5. Распределение мин.HP по всем 6 активным: ' + distribution
+      'НЕТ ДОМИНАНТА провалено: лучшая чистая стратегия быстрее (' + bestPure.toFixed(1) + 'с) лучшей смешанной' +
+      (bestMixed !== null ? ' (' + bestMixed.toFixed(1) + 'с)' : ' (смешанные не побеждают ни разу)')
     );
   }
 
-  // Бинарности больше нет: доля прогонов (из 6 активных) с мин.HP РОВНО
-  // 100% или РОВНО 0% — менее половины.
-  var binaryCount = activeRuns.filter(function (r) {
-    return r.minPlayerBaseHpFrac === 1 || r.minPlayerBaseHpFrac === 0;
-  }).length;
-  if (binaryCount / activeRuns.length >= 0.5) {
+  // 3. НИЖНЯЯ ГРАНИЦА: не менее 3 из 6 стратегий побеждают не менее половины своих партий.
+  var atLeastHalf = ACTIVE.filter(function (name) { return winRate[name] >= 0.5; });
+  if (atLeastHalf.length < 3) {
     failures.push(
-      'БИНАРНОСТЬ не снята: ' + binaryCount + ' из ' + activeRuns.length +
-      ' активных прогонов дали мин.HP ровно 100% или 0% (>= половины). Распределение: ' + distribution
+      'НИЖНЯЯ ГРАНИЦА провалена: не менее половины партий побеждают только ' + atLeastHalf.length +
+      ' из 6 стратегий (' + (atLeastHalf.join(', ') || 'никто') + ')'
     );
   }
 
-  // Первый враг не позже 6-й секунды.
-  var firstWaveTime = balance.enemy.schedule.length ? balance.enemy.schedule[0].time : Infinity;
-  if (firstWaveTime > 6) {
-    failures.push('Первый враг появляется на ' + firstWaveTime + 'с — позже порога в 6с');
+  var decided = rows.filter(function (r) { return r.winnerMinHpFrac !== null; });
+
+  // 4. БИНАРНОСТИ НЕТ: не менее 19 из 48 (≥40%) партий с мин.HP базы
+  //    победителя строго между 1% и 99%.
+  var gradientRows = decided.filter(function (r) { return r.winnerMinHpFrac > 0.01 && r.winnerMinHpFrac < 0.99; });
+  if (gradientRows.length < 19) {
+    failures.push(
+      'БИНАРНОСТЬ не снята: ' + gradientRows.length + ' из 48 партий с мин.HP базы победителя строго между 1% и 99% — нужно не менее 19 (40%)'
+    );
   }
 
-  // Расписание бесконечно: при бездействии игрока враг продолжает
-  // спавниться и после 300с.
+  // 5. КАМБЭК СУЩЕСТВУЕТ: не менее 6 партий, где мин.HP базы победителя
+  //    опускался до 40% и ниже, и партия всё равно выиграна победителем.
+  var comebacks = decided.filter(function (r) { return r.winnerMinHpFrac <= 0.4; });
+  if (comebacks.length < 6) {
+    failures.push('КАМБЭК не подтверждён: ' + comebacks.length + ' партий с мин.HP базы победителя ≤40% — нужно не менее 6');
+  }
+
+  // 6. РОЛЬ C ОБОСНОВАНА: A/B mixShieldArchers (щит+стрелок) против
+  //    mixCheapArchers (боец+стрелок, тот же архетип БЕЗ щита) — разница
+  //    доли побед не менее 15 п.п. в пользу стратегии со щитом.
+  var withC = winRate.mixShieldArchers;
+  var withoutC = winRate.mixCheapArchers;
+  var cDeltaPp = (withC - withoutC) * 100;
+  if (cDeltaPp < 15) {
+    failures.push(
+      'РОЛЬ C не обоснована: mixShieldArchers (с C, доля побед ' + fmtPct(withC) + ') против mixCheapArchers ' +
+      '(без C, доля побед ' + fmtPct(withoutC) + ') — разница ' + cDeltaPp.toFixed(1) +
+      ' п.п., нужно не менее 15 (см. дефолт-Б, раздел 6 п.17, и BLOCKERS.md)'
+    );
+  }
+
+  // Регрессия наследия ТЗ №05 (не входит в критерий готовности раздела 4,
+  // но остаётся дешёвой и информативной).
+  var idle = runGame('idle', SEEDS[0], balance, factories);
+  if (idle.result !== 'LOSE') {
+    failures.push('idle не проиграл: исход ' + idle.result + ' (ожидалось поражение) — регрессия наследия ТЗ №04');
+  }
   var endless = checkEndlessSchedule(balance);
   if (!(endless.spawnedBy320 > endless.spawnedBy300)) {
     failures.push(
       'Расписание НЕ бесконечно: спавнов к 300с=' + endless.spawnedBy300 + ', к 320с=' + endless.spawnedBy320 +
-      ' — спавн прекращается вместо продолжения по формуле'
+      ' — регрессия наследия ТЗ №05'
     );
   }
 
-  // ---- Фаза 2 (ТЗ №05, раздел 2.2): превью волны обязано иметь цену ----
-  var counter = byName.counter;
-  var greedy = byName.greedy;
-
-  if (counter.result !== 'WIN') {
-    failures.push('counter не победил (исход ' + counter.result + ') — сравнение с greedy по времени невозможно');
-  } else if (greedy.result !== 'WIN') {
-    failures.push('greedy не победил (исход ' + greedy.result + ') — базы для сравнения с counter нет');
+  // ---- Блок 4 (ТЗ №06): честная ценность превью волны — не порог, число ----
+  var counter = runGame('counter', SEEDS[0], balance, factories);
+  var noPreview = byStrategy.mixCheapArchers[0]; // use_preview:false вариант той же ротации A/B
+  var previewLine;
+  if (counter.result === 'WIN' && noPreview.result === 'WIN') {
+    var speedup = (1 - counter.duration / noPreview.duration) * 100;
+    previewLine = 'Ценность превью волны (блок 4, честный A/B use_preview true/false, ротация A/B): ' +
+      'с превью ' + counter.duration.toFixed(1) + 'с, без превью ' + noPreview.duration.toFixed(1) +
+      'с — выигрыш во времени ' + speedup.toFixed(1) + '% (порогом не является, T-09).';
   } else {
-    var speedup = 1 - counter.duration / greedy.duration;
-    if (speedup < 0.10) {
-      failures.push(
-        'counter МЕДЛЕННЕЕ порога: ' + counter.duration.toFixed(1) + 'с против greedy ' + greedy.duration.toFixed(1) +
-        'с — выигрыш ' + (speedup * 100).toFixed(1) + '%, нужно не менее 10%'
-      );
-    }
+    previewLine = 'Ценность превью волны: сравнение невозможно — counter=' + counter.result +
+      ', без превью (mixCheapArchers)=' + noPreview.result + ' (оба должны быть WIN).';
   }
-
-  // Верхняя граница с учётом counter: ни одна чистая по-прежнему не
-  // быстрее лучшей смешанной, где смешанные теперь включают counter.
-  var mixedWithCounter = winners.filter(function (r) {
-    return MIXED.indexOf(r.name) !== -1 || r.name === 'counter';
-  }).concat(counter.result === 'WIN' ? [counter] : []);
-  var bestMixedWithCounter = mixedWithCounter.length
-    ? mixedWithCounter.reduce(function (a, b) { return a.duration <= b.duration ? a : b; })
-    : null;
-  if (bestPure && (!bestMixedWithCounter || bestPure.duration < bestMixedWithCounter.duration)) {
-    failures.push(
-      'ВЕРХНЯЯ ГРАНИЦА (с учётом counter) провалена: чистая ' + bestPure.name + ' (' + bestPure.duration.toFixed(1) +
-      'с) быстрее лучшей смешанной ' + (bestMixedWithCounter ? bestMixedWithCounter.name + ' (' + bestMixedWithCounter.duration.toFixed(1) + 'с)' : '(смешанные не побеждают)')
-    );
-  }
+  console.log('\n' + previewLine);
 
   if (failures.length > 0) {
     console.error('\nПРОВАЛ (' + failures.length + '):');
@@ -323,9 +309,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nOK: все критерии приёмки ТЗ №05 (фаза 1 и фаза 2) выполнены. Побеждают ' + winners.length + ' из 6: ' +
-    winners.map(function (r) { return r.name + ' ' + r.duration.toFixed(1) + 'с'; }).join(', ') +
-    '. counter: ' + counter.duration.toFixed(1) + 'с (быстрее greedy на ' + ((1 - counter.duration / greedy.duration) * 100).toFixed(1) + '%).');
+  console.log('\nOK: 48 партий (6×8), критерии готовности ТЗ №06 (раздел 4, пп.1-6,8) выполнены.');
 }
 
 main();

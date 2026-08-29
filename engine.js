@@ -92,7 +92,7 @@
         hitstopMs: 0,
         shakeMag: 0, shakeMs: 0, shakeTotalMs: 0,
         dpsAccum: 0, dpsLastSecond: 0, dpsSecondFloor: 0,
-        foodFullTime: 0, minPlayerBaseHp: 0,
+        foodFullTime: 0, minPlayerBaseHp: 0, minEnemyBaseHp: 0,
         nextEndlessTime: 0, endlessWaveIndex: 0,
         nextWaveType: null, nextWaveTime: null, nextWaveCount: null,
         playerBaseDefCooldown: 0, enemyBaseDefCooldown: 0
@@ -109,6 +109,7 @@
       state.playerBaseHp = state.playerBaseMaxHp = balance.player.base_hp;
       state.enemyBaseHp = state.enemyBaseMaxHp = balance.enemy.base_hp;
       state.minPlayerBaseHp = state.playerBaseHp;
+      state.minEnemyBaseHp = state.enemyBaseHp;
       var sched = balance.enemy.schedule;
       state.nextEndlessTime = (sched.length ? sched[sched.length - 1].time : 0) +
         (balance.enemy.endless ? balance.enemy.endless.interval_start_s : 0);
@@ -306,6 +307,7 @@
         if (state.playerBaseHp < state.minPlayerBaseHp) state.minPlayerBaseHp = state.playerBaseHp;
       } else {
         state.enemyBaseHp = Math.max(0, state.enemyBaseHp - amount);
+        if (state.enemyBaseHp < state.minEnemyBaseHp) state.minEnemyBaseHp = state.enemyBaseHp;
         state.dpsAccum += amount;
       }
       triggerShake(balance.juice.base_hit_shake_px, balance.juice.base_hit_shake_ms);
