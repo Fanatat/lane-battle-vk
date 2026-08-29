@@ -280,23 +280,23 @@
     ctx.lineTo(layout.w, layout.laneY + layout.unitSize * 0.7);
     ctx.stroke();
 
-    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, '#3fa7ff', 'ИГРОК', 'left');
-    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, '#e0475a', 'ВРАГ', 'right');
+    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, balance.sides.player, 'ИГРОК', 'left');
+    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, balance.sides.enemy, 'ВРАГ', 'right');
 
-    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], '#3fa7ff');
-    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], '#e0475a');
+    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], balance.sides.player);
+    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], balance.sides.enemy);
     for (var m = 0; m < shots.length; m++) drawShot(shots[m]);
     for (var k = 0; k < dmgNumbers.length; k++) drawDamageNumber(dmgNumbers[k]);
 
     ctx.restore();
   }
 
-  function drawBase(base, hp, maxHp, color, label, numberAlign) {
-    ctx.fillStyle = color;
+  function drawBase(base, hp, maxHp, side, label, numberAlign) {
+    ctx.fillStyle = side.fill;
     ctx.fillRect(base.x, base.y, base.w, base.h);
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(base.x, base.y, base.w, base.h * 0.18);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = side.text;
     ctx.font = 'bold ' + Math.round(layout.unitSize * 0.22) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -330,7 +330,32 @@
     }
   }
 
-  function drawUnit(u, sideColor) {
+  // Форма — единственный несущий тип-сигнал в отрисовке юнита (плюс буква):
+  // rect = боец, spike = стрелок (остриё — дальний бой), dome = щит (купол — держит фронт).
+  function pathUnitShape(shape, x, y, w, h) {
+    ctx.beginPath();
+    if (shape === 'spike') {
+      var neckY = y + h * 0.32;
+      ctx.moveTo(x, neckY);
+      ctx.lineTo(x + w / 2, y);
+      ctx.lineTo(x + w, neckY);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.closePath();
+    } else if (shape === 'dome') {
+      var domeH = h * 0.32;
+      ctx.moveTo(x, y + domeH);
+      ctx.quadraticCurveTo(x, y, x + w / 2, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + domeH);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.closePath();
+    } else {
+      ctx.rect(x, y, w, h);
+    }
+  }
+
+  function drawUnit(u, side) {
     if (!u.active) return;
     var spec = balance.units[u.type];
     var size = layout.unitSize;
@@ -345,25 +370,27 @@
     var groundY = u.y + size / 2; // fixed baseline: unit grows upward from the lane as it squashes
     var y = groundY - h;
 
-    ctx.fillStyle = spec.color;
-    ctx.fillRect(x, y, w, h);
-
-    // type sets the fill, side sets this outline — the two colorings answer different questions
-    // ("what is it" vs "whose is it") and both matter once units from both sides share the lane.
-    ctx.strokeStyle = sideColor;
-    ctx.lineWidth = Math.max(2, size * 0.045);
-    ctx.strokeRect(x, y, w, h);
+    // Заливка кодирует сторону (чья), форма — тип (какой). Обводка — только
+    // для читаемости силуэта на фоне, сама по себе она ничего не сообщает
+    // (тонкий контур на телефоне исчезает первым — вывод приёмки ТЗ №01).
+    pathUnitShape(spec.shape, x, y, w, h);
+    ctx.fillStyle = side.fill;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = Math.max(1, size * 0.03);
+    ctx.stroke();
 
     if (u.flashT > 0) {
+      pathUnitShape(spec.shape, x, y, w, h);
       ctx.fillStyle = 'rgba(255,255,255,' + (u.flashT / (balance.juice.hit_flash_ms / 1000)) + ')';
-      ctx.fillRect(x, y, w, h);
+      ctx.fill();
     }
 
-    ctx.fillStyle = '#0b0d12';
+    ctx.fillStyle = side.text;
     ctx.font = 'bold ' + Math.round(size * 0.4) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(u.type, u.x, y + h / 2);
+    ctx.fillText(u.type, u.x, y + h / 2 + h * 0.08);
 
     drawHpBar(u.x - w / 2, y - size * 0.16, w, size * 0.1, u.hp, u.maxHp, false);
   }

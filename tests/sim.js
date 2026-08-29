@@ -3,7 +3,7 @@
  * tests/sim.js — турнир стратегий, headless, без браузера.
  * Использует тот же engine.js, что и main.js: правила боя не дублируются.
  * Прогон валится с ненулевым кодом и точечным сообщением, если критерии
- * приёмки ТЗ №03 (раздел 3) не выполнены.
+ * приёмки ТЗ №04 (раздел 3) не выполнены.
  *
  * Запуск: node tests/sim.js
  */
@@ -67,9 +67,10 @@ function makeRotation(pattern) {
   };
 }
 
-var STRATEGY_NAMES = ['spamA', 'spamB', 'spamC', 'mixShieldArchers', 'mixCheapArchers', 'greedy', 'idle'];
 var PURE = ['spamA', 'spamB', 'spamC'];
 var MIXED = ['mixShieldArchers', 'mixCheapArchers', 'greedy'];
+var ACTIVE = PURE.concat(MIXED); // шесть активных стратегий из ТЗ №04, раздел 3
+var STRATEGY_NAMES = ACTIVE.concat(['idle']);
 
 function buildFactories(balance) {
   return {
@@ -151,20 +152,31 @@ function main() {
     }
   });
 
-  var winners = runs.filter(function (r) { return r.result === 'WIN'; });
+  var activeRuns = runs.filter(function (r) { return ACTIVE.indexOf(r.name) !== -1; });
+  var winners = activeRuns.filter(function (r) { return r.result === 'WIN'; });
   var pureWinners = winners.filter(function (r) { return PURE.indexOf(r.name) !== -1; });
   var mixedWinners = winners.filter(function (r) { return MIXED.indexOf(r.name) !== -1; });
 
   var bestPure = pureWinners.length ? pureWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
   var bestMixed = mixedWinners.length ? mixedWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
 
-  // ГЛАВНЫЙ порог: ни одна чистая стратегия не быстрее лучшей смешанной.
-  if (!bestMixed) {
-    failures.push('ГЛАВНЫЙ ПОРОГ: ни одна смешанная стратегия не победила — сравнивать не с чем');
-  } else if (bestPure && bestPure.duration < bestMixed.duration) {
+  // НИЖНЯЯ граница (главный порог этого ТЗ): не менее 3 из 6 активных
+  // стратегий обязаны побеждать. Единственная выигрышная линия недопустима,
+  // даже если остальные проверки зелёные.
+  if (winners.length < 3) {
     failures.push(
-      'ГЛАВНЫЙ ПОРОГ провален: чистая ' + bestPure.name + ' быстрее лучшей смешанной ' +
-      bestMixed.name + ' (' + bestPure.duration.toFixed(1) + 'с против ' + bestMixed.duration.toFixed(1) + 'с)'
+      'НИЖНЯЯ ГРАНИЦА провалена: побеждает только ' + winners.length + ' из 6 активных стратегий (' +
+      (winners.map(function (r) { return r.name; }).join(', ') || 'никто') + ') — нужно не менее 3'
+    );
+  }
+
+  // ВЕРХНЯЯ граница: ни одна чистая стратегия не быстрее лучшей смешанной.
+  // Если чистые вообще не побеждают, порог выполнен тривиально. Если чистая
+  // побеждает, а ни одна смешанная — нет, чистая тем более «быстрее».
+  if (bestPure && (!bestMixed || bestPure.duration < bestMixed.duration)) {
+    failures.push(
+      'ВЕРХНЯЯ ГРАНИЦА провалена: чистая ' + bestPure.name + ' (' + bestPure.duration.toFixed(1) + 'с) быстрее лучшей смешанной ' +
+      (bestMixed ? bestMixed.name + ' (' + bestMixed.duration.toFixed(1) + 'с)' : '(смешанные не побеждают)')
     );
   }
 
@@ -173,17 +185,14 @@ function main() {
     failures.push('idle не проиграл: исход ' + idle.result + ' (ожидалось поражение)');
   }
 
-  if (bestMixed) {
-    if (bestMixed.duration < 100 || bestMixed.duration > 140) {
-      failures.push('лучшая смешанная (' + bestMixed.name + '): длительность ' + bestMixed.duration.toFixed(1) + 'с вне диапазона 100–140с');
+  winners.forEach(function (r) {
+    if (r.duration < 90 || r.duration > 140) {
+      failures.push('победитель ' + r.name + ': длительность ' + r.duration.toFixed(1) + 'с вне диапазона 90–140с');
     }
-    if (bestMixed.foodFullFrac >= 0.15) {
-      failures.push('лучшая смешанная (' + bestMixed.name + '): доля времени с полной едой ' + fmtPct(bestMixed.foodFullFrac) + ' >= 15%');
+    if (r.foodFullFrac >= 0.15) {
+      failures.push('победитель ' + r.name + ': доля времени с полной едой ' + fmtPct(r.foodFullFrac) + ' >= 15%');
     }
-    if (bestMixed.minPlayerBaseHpFrac >= 0.6) {
-      failures.push('лучшая смешанная (' + bestMixed.name + '): минимальный HP базы игрока ' + fmtPct(bestMixed.minPlayerBaseHpFrac) + ' >= 60% — напряжения нет');
-    }
-  }
+  });
 
   if (failures.length > 0) {
     console.error('\nПРОВАЛ (' + failures.length + '):');
@@ -191,9 +200,8 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nOK: все критерии приёмки ТЗ №03 выполнены. Лучшая чистая: ' +
-    (bestPure ? bestPure.name + ' ' + bestPure.duration.toFixed(1) + 'с' : '(нет победителей)') +
-    '; лучшая смешанная: ' + bestMixed.name + ' ' + bestMixed.duration.toFixed(1) + 'с.');
+  console.log('\nOK: все критерии приёмки ТЗ №04 выполнены. Побеждают ' + winners.length + ' из 6: ' +
+    winners.map(function (r) { return r.name + ' ' + r.duration.toFixed(1) + 'с'; }).join(', ') + '.');
 }
 
 main();

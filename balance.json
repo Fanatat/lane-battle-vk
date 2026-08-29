@@ -4,36 +4,46 @@
     "A": {
       "label": "A",
       "role": "боец",
+      "shape": "rect",
       "attack_mode": "melee",
       "hp": 25,
       "damage": 6,
       "attack_speed": 0.5,
       "speed_uw": 1.2,
-      "cost": 10,
-      "color": "#3fa7ff"
+      "cost": 10
     },
     "B": {
       "label": "B",
       "role": "стрелок",
+      "shape": "spike",
       "attack_mode": "ranged",
       "range_uw": 3.5,
       "hp": 25,
       "damage": 14,
       "attack_speed": 0.7,
       "speed_uw": 0.9,
-      "cost": 16,
-      "color": "#5fd15f"
+      "cost": 16
     },
     "C": {
       "label": "C",
       "role": "щит",
+      "shape": "dome",
       "attack_mode": "melee",
       "hp": 160,
       "damage": 6,
       "attack_speed": 1,
       "speed_uw": 0.55,
-      "cost": 22,
-      "color": "#e0763c"
+      "cost": 22
+    }
+  },
+  "sides": {
+    "player": {
+      "fill": "#d7deea",
+      "text": "#12141a"
+    },
+    "enemy": {
+      "fill": "#33202a",
+      "text": "#f2eef0"
     }
   },
   "geometry": {
@@ -52,11 +62,6 @@
     "base_hp": 300,
     "schedule": [
       {
-        "time": 6,
-        "type": "A",
-        "count": 1
-      },
-      {
         "time": 14,
         "type": "A",
         "count": 1
@@ -74,11 +79,6 @@
       {
         "time": 33,
         "type": "B",
-        "count": 1
-      },
-      {
-        "time": 38,
-        "type": "A",
         "count": 1
       },
       {
@@ -102,11 +102,6 @@
         "count": 1
       },
       {
-        "time": 58,
-        "type": "C",
-        "count": 1
-      },
-      {
         "time": 64,
         "type": "A",
         "count": 1
@@ -120,11 +115,6 @@
         "time": 75,
         "type": "C",
         "count": 2
-      },
-      {
-        "time": 75,
-        "type": "B",
-        "count": 1
       },
       {
         "time": 82,
@@ -147,11 +137,6 @@
         "count": 1
       },
       {
-        "time": 102,
-        "type": "B",
-        "count": 1
-      },
-      {
         "time": 107,
         "type": "C",
         "count": 1
@@ -164,7 +149,7 @@
       {
         "time": 110,
         "type": "B",
-        "count": 2
+        "count": 1
       },
       {
         "time": 116,
@@ -184,11 +169,6 @@
       {
         "time": 134,
         "type": "C",
-        "count": 1
-      },
-      {
-        "time": 140,
-        "type": "B",
         "count": 1
       },
       {
@@ -212,11 +192,6 @@
         "count": 1
       },
       {
-        "time": 170,
-        "type": "B",
-        "count": 1
-      },
-      {
         "time": 176,
         "type": "B",
         "count": 1
@@ -237,11 +212,6 @@
         "count": 1
       },
       {
-        "time": 200,
-        "type": "B",
-        "count": 1
-      },
-      {
         "time": 206,
         "type": "B",
         "count": 1
@@ -259,11 +229,6 @@
       {
         "time": 224,
         "type": "C",
-        "count": 1
-      },
-      {
-        "time": 230,
-        "type": "B",
         "count": 1
       },
       {
