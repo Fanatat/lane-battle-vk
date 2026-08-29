@@ -51,7 +51,12 @@
       '<div><span>Заспавнено</span><span id="devSpawned">0</span></div>' +
       '<div><span>Убито</span><span id="devKilled">0</span></div>' +
       '<div><span>DPS игрока</span><span id="devDps">0</span></div>' +
-      '<div><span>Еда</span><span id="devFood">0</span></div>';
+      '<div><span>Еда</span><span id="devFood">0</span></div>' +
+      '<h2>Последний рубеж (ТЗ №06)</h2>' +
+      '<div><span>Точка подкрепления</span><span id="devReinforceOffset">0</span></div>' +
+      '<div><span>Радиус залпа базы</span><span id="devDefenseRange">0</span></div>' +
+      '<div><span>Мин.HP базы игрока</span><span id="devMinPlayerHp">0</span></div>' +
+      '<div><span>Мин.HP базы врага</span><span id="devMinEnemyHp">0</span></div>';
     panel.appendChild(statsBox);
 
     var controlsBox = document.createElement('div');
@@ -72,6 +77,15 @@
     hint.textContent = 'D — скрыть/показать панель. Изменения чисел применяются сразу; для базы/еды жми «Рестарт боя».';
     controlsBox.appendChild(hint);
     panel.appendChild(controlsBox);
+
+    // Точка подкрепления и радиус залпа зависят от текущего разрешения
+    // (клэмп 20% длины полосы, ТЗ №06 блок 1) — берём из фактического layout,
+    // не пересчитываем по своей формуле, иначе разойдёмся с движком.
+    var layout = window.Game.getLayout();
+    var offsetUw = layout.reinforceOffsetPx / layout.unitSize;
+    document.getElementById('devReinforceOffset').textContent = offsetUw.toFixed(2) + ' uw';
+    document.getElementById('devDefenseRange').textContent =
+      (balance.base_defense ? balance.base_defense.range_uw + ' uw' : '—');
 
     var slidersBox = document.createElement('div');
     slidersBox.appendChild(sectionTitle('balance.json'));
@@ -255,6 +269,14 @@
       document.getElementById('devKilled').textContent = s.killedCount;
       document.getElementById('devDps').textContent = Math.round(s.dpsLastSecond);
       document.getElementById('devFood').textContent = Math.floor(s.food) + ' / ' + s.foodCap;
+
+      var layout = window.Game.getLayout();
+      document.getElementById('devReinforceOffset').textContent =
+        (layout.reinforceOffsetPx / layout.unitSize).toFixed(2) + ' uw';
+      document.getElementById('devMinPlayerHp').textContent =
+        (s.minPlayerBaseHp / s.playerBaseMaxHp * 100).toFixed(1) + '%';
+      document.getElementById('devMinEnemyHp').textContent =
+        (s.minEnemyBaseHp / s.enemyBaseMaxHp * 100).toFixed(1) + '%';
     }, 150);
   }
 

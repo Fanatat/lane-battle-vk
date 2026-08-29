@@ -576,6 +576,7 @@
 
   window.Game = {
     getBalance: function () { return balance; },
+    getLayout: function () { return layout; },
     getState: function () { return engine.getState(); },
     restart: function () { restartBattle(); },
     setPaused: function (p) { paused = p; },
