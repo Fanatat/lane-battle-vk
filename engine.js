@@ -94,7 +94,8 @@
         dpsAccum: 0, dpsLastSecond: 0, dpsSecondFloor: 0,
         foodFullTime: 0, minPlayerBaseHp: 0,
         nextEndlessTime: 0, endlessWaveIndex: 0,
-        nextWaveType: null, nextWaveTime: null, nextWaveCount: null
+        nextWaveType: null, nextWaveTime: null, nextWaveCount: null,
+        playerBaseDefCooldown: 0, enemyBaseDefCooldown: 0
       };
     }
 
@@ -274,6 +275,17 @@
       return best ? { unit: best, dist: bestDist } : null;
     }
 
+    function nearestToPoint(pool, originX, rangePx) {
+      var best = null, bestDist = Infinity;
+      for (var i = 0; i < pool.length; i++) {
+        var o = pool[i];
+        if (!o.active) continue;
+        var d = Math.abs(o.x - originX);
+        if (d <= rangePx && d < bestDist) { bestDist = d; best = o; }
+      }
+      return best;
+    }
+
     function applyDamage(target, amount, isPlayerAttacking) {
       target.hp -= amount;
       target.flashT = balance.juice.hit_flash_ms / 1000;
@@ -386,6 +398,37 @@
       }
     }
 
+    // Последний рубеж (ТЗ №06, блок 2): у обеих баз безусловно есть оружие —
+    // залп по ближайшему врагу в радиусе base_defense.range_uw, перезарядка
+    // base_defense.cooldown. Своё HP у оружия нет, дружественного огня нет,
+    // цель — один враг, урон не делится. Симметрично, флага отключения нет
+    // (дефолт #8) — асимметрия испортила бы замер.
+    function stepBaseDefense(dt) {
+      var bd = balance.base_defense;
+      if (!bd) return;
+      var rangePx = bd.range_uw * layout.unitSize;
+
+      if (state.playerBaseDefCooldown > 0) state.playerBaseDefCooldown -= dt;
+      if (state.playerBaseDefCooldown <= 0 && !state.over) {
+        var enemyTarget = nearestToPoint(enemyUnits, layout.playerBase.frontX, rangePx);
+        if (enemyTarget) {
+          state.playerBaseDefCooldown = bd.cooldown;
+          applyDamage(enemyTarget, bd.damage, true);
+          onRangedShot(layout.playerBase.frontX, layout.laneY, enemyTarget.x, enemyTarget.y);
+        }
+      }
+
+      if (state.enemyBaseDefCooldown > 0) state.enemyBaseDefCooldown -= dt;
+      if (state.enemyBaseDefCooldown <= 0 && !state.over) {
+        var playerTarget = nearestToPoint(playerUnits, layout.enemyBase.frontX, rangePx);
+        if (playerTarget) {
+          state.enemyBaseDefCooldown = bd.cooldown;
+          applyDamage(playerTarget, bd.damage, false);
+          onRangedShot(layout.enemyBase.frontX, layout.laneY, playerTarget.x, playerTarget.y);
+        }
+      }
+    }
+
     function triggerHitstop(ms) {
       state.hitstopMs = Math.max(state.hitstopMs, ms);
     }
@@ -415,6 +458,7 @@
       processSchedule();
       simulateSide(playerUnits, playerOrder, true, simDt);
       simulateSide(enemyUnits, enemyOrder, false, simDt);
+      stepBaseDefense(simDt);
     }
 
     restart();

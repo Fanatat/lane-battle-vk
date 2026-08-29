@@ -290,6 +290,7 @@
 
     drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, balance.sides.player, 'ИГРОК', 'left');
     drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, balance.sides.enemy, 'ВРАГ', 'right');
+    drawLastStand();
     drawWavePreview(state);
 
     for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], balance.sides.player);
@@ -337,6 +338,43 @@
         ctx.fillText(text, x + w, y - 2);
       }
     }
+  }
+
+  // Дистанция подкрепления и последний рубеж (ТЗ №06, блоки 1–2): тонкая
+  // линия на полосе в точке подкрепления каждой стороны, полупрозрачная
+  // дуга радиуса залпа у каждой базы. Цвет — существующая палитра стороны
+  // (дефолт #9), новых цветов не вводим.
+  function drawLastStand() {
+    drawReinforceLine(layout.playerReinforceX, balance.sides.player);
+    drawReinforceLine(layout.enemyReinforceX, balance.sides.enemy);
+
+    var bd = balance.base_defense;
+    if (!bd) return;
+    var rangePx = bd.range_uw * layout.unitSize;
+    drawBaseDefenseArc(layout.playerBase.frontX, balance.sides.player, rangePx);
+    drawBaseDefenseArc(layout.enemyBase.frontX, balance.sides.enemy, rangePx);
+  }
+
+  function drawReinforceLine(x, side) {
+    var size = layout.unitSize;
+    ctx.strokeStyle = side.fill;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = Math.max(1, size * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(x, layout.laneY - size * 0.9);
+    ctx.lineTo(x, layout.laneY + size * 0.9);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawBaseDefenseArc(frontX, side, rangePx) {
+    ctx.strokeStyle = side.fill;
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = Math.max(1, layout.unitSize * 0.06);
+    ctx.beginPath();
+    ctx.arc(frontX, layout.laneY, rangePx, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   // Превью следующей волны (фаза 2 ТЗ №05): те же силуэты, что у юнитов на
