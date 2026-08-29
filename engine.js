@@ -59,6 +59,7 @@
     var onKill = hooks.onKill || function () {};
     var onBaseHit = hooks.onBaseHit || function () {};
     var onBaseDestroyed = hooks.onBaseDestroyed || function () {};
+    var onRangedShot = hooks.onRangedShot || function () {};
 
     var playerUnits = makePool(POOL_SIZE);
     var enemyUnits = makePool(POOL_SIZE);
@@ -233,7 +234,6 @@
 
     function simulateSide(pool, order, isPlayer, dt) {
       var n = buildOrder(pool, order, isPlayer);
-      var attackRangePx = balance.geometry.attack_range_uw * layout.unitSize;
       var siegeRangePx = balance.geometry.siege_range_uw * layout.unitSize;
       var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
       var otherPool = isPlayer ? enemyUnits : playerUnits;
@@ -245,22 +245,29 @@
         var spec = balance.units[u.type];
         if (u.cooldown > 0) u.cooldown -= dt;
 
-        var found = nearestEnemy(u, otherPool);
-        if (found && found.dist <= attackRangePx) {
-          u.state = 'ATTACK';
-          if (u.cooldown <= 0) {
-            u.cooldown = spec.attack_speed;
-            applyDamage(found.unit, spec.damage, isPlayer);
-          }
-          continue;
-        }
-
+        // Осада — безусловный приоритет: юнит в радиусе осады бьёт по базе,
+        // даже если рядом враг (иначе бой у самой базы стопорит осаду навечно).
         var distToBase = isPlayer ? (frontEdge - u.x) : (u.x - frontEdge);
         if (distToBase <= siegeRangePx) {
           u.state = 'SIEGE';
           if (u.cooldown <= 0) {
             u.cooldown = spec.attack_speed;
             damageBase(!isPlayer, spec.damage);
+          }
+          continue;
+        }
+
+        // Радиус атаки — свой у каждой роли: ближний бой берёт общую
+        // geometry.attack_range_uw, стрелок — собственный unit.range_uw.
+        var isRanged = spec.attack_mode === 'ranged';
+        var ownRangePx = (isRanged ? spec.range_uw : balance.geometry.attack_range_uw) * layout.unitSize;
+        var found = nearestEnemy(u, otherPool);
+        if (found && found.dist <= ownRangePx) {
+          u.state = 'ATTACK';
+          if (u.cooldown <= 0) {
+            u.cooldown = spec.attack_speed;
+            applyDamage(found.unit, spec.damage, isPlayer);
+            if (isRanged) onRangedShot(u.x, u.y, found.unit.x, found.unit.y);
           }
           continue;
         }

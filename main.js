@@ -10,6 +10,7 @@
   var dpr = Math.max(1, window.devicePixelRatio || 1);
 
   var DMG_POOL_SIZE = 96;
+  var SHOT_POOL_SIZE = 48;
 
   var balance = null;
   var engine = null;
@@ -35,6 +36,16 @@
 
   var dmgNumbers = makeDmgPool(DMG_POOL_SIZE);
 
+  function makeShotPool(size) {
+    var arr = new Array(size);
+    for (var i = 0; i < size; i++) {
+      arr[i] = { active: false, fromX: 0, fromY: 0, toX: 0, toY: 0, age: 0, maxAge: 0 };
+    }
+    return arr;
+  }
+
+  var shots = makeShotPool(SHOT_POOL_SIZE);
+
   // ---------------- loading ----------------
 
   fetch('balance.json', { cache: 'no-store' })
@@ -46,7 +57,8 @@
       balance = data;
       engine = window.LaneEngine.createEngine(balance, layout, {
         onDamage: spawnDamageNumber,
-        onBaseDestroyed: showPopup
+        onBaseDestroyed: showPopup,
+        onRangedShot: spawnShot
       });
       resize();
       restartBattle();
@@ -131,10 +143,24 @@
     d.age = 0; d.maxAge = balance.juice.damage_number_ms / 1000; d.value = Math.round(value);
   }
 
+  function findFreeShot() {
+    for (var i = 0; i < shots.length; i++) {
+      if (!shots[i].active) return shots[i];
+    }
+    return shots[0];
+  }
+
+  function spawnShot(fromX, fromY, toX, toY) {
+    var s = findFreeShot();
+    s.active = true; s.fromX = fromX; s.fromY = fromY; s.toX = toX; s.toY = toY;
+    s.age = 0; s.maxAge = balance.juice.ranged_shot_ms / 1000;
+  }
+
   // ---------------- battle lifecycle ----------------
 
   function restartBattle() {
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
+    for (var m = 0; m < shots.length; m++) shots[m].active = false;
     engine.restart();
     hidePopup();
     updateSpeedButton();
@@ -189,6 +215,7 @@
     for (var i = 0; i < playerUnits.length; i++) tickUnitAnim(playerUnits[i], realDt);
     for (var j = 0; j < enemyUnits.length; j++) tickUnitAnim(enemyUnits[j], realDt);
     for (var k = 0; k < dmgNumbers.length; k++) tickDamageNumber(dmgNumbers[k], realDt);
+    for (var m = 0; m < shots.length; m++) tickShot(shots[m], realDt);
 
     updateHud();
   }
@@ -216,6 +243,12 @@
     d.age += realDt;
     d.y += d.vy * realDt;
     if (d.age >= d.maxAge) d.active = false;
+  }
+
+  function tickShot(s, realDt) {
+    if (!s.active) return;
+    s.age += realDt;
+    if (s.age >= s.maxAge) s.active = false;
   }
 
   // ---------------- rendering ----------------
@@ -252,6 +285,7 @@
 
     for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], '#3fa7ff');
     for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], '#e0475a');
+    for (var m = 0; m < shots.length; m++) drawShot(shots[m]);
     for (var k = 0; k < dmgNumbers.length; k++) drawDamageNumber(dmgNumbers[k]);
 
     ctx.restore();
@@ -343,6 +377,19 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('-' + d.value, d.x, d.y);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawShot(s) {
+    if (!s.active) return;
+    var t = s.age / s.maxAge;
+    ctx.globalAlpha = Math.max(0, 1 - t);
+    ctx.strokeStyle = balance.juice.ranged_shot_color;
+    ctx.lineWidth = Math.max(1, layout.unitSize * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(s.fromX, s.fromY);
+    ctx.lineTo(s.toX, s.toY);
+    ctx.stroke();
     ctx.globalAlpha = 1;
   }
 

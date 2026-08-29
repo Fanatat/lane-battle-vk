@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /*
- * tests/sim.js — headless прогон боя четырьмя ботами, без браузера.
+ * tests/sim.js — турнир стратегий, headless, без браузера.
  * Использует тот же engine.js, что и main.js: правила боя не дублируются.
  * Прогон валится с ненулевым кодом и точечным сообщением, если критерии
- * приёмки ТЗ №02 (раздел 3) не выполнены.
+ * приёмки ТЗ №03 (раздел 3) не выполнены.
  *
  * Запуск: node tests/sim.js
  */
@@ -14,12 +14,10 @@ var LaneEngine = require(path.join(__dirname, '..', 'engine.js'));
 
 // Опорное разрешение для headless-прогона: 1280×587 — десктоп-канвас после
 // вычета высоты topBar и карточек юнитов из index.html (~133px суммарно).
-// Геометрия боя завязана на экран (см. balance.json._comment), поэтому цифры
-// калиброваны под это разрешение; на другом aspect ratio секунды поплывут.
 var REF_W = 1280;
 var REF_H = 587;
 var DT = 1 / 30;
-var MAX_TIME = 600; // громкий предохранитель от бесконечного цикла
+var MAX_TIME = 600; // громкий предохранитель от бесконечного цикла — пат
 
 function loadBalance() {
   var p = path.join(__dirname, '..', 'balance.json');
@@ -30,15 +28,13 @@ function loadBalance() {
 // "greedy" смотрит на еду не каждый кадр, а раз в GLANCE_S секунд — как игрок,
 // поглядывающий на полоску, а не бот с рефлексом в 1/30с. Без этого «трать как
 // только хватает на самого дорогого доступного» математически вырождается в
-// вечный спам A (A становится доступной раньше B и C при любой частоте
-// проверки < времени набора 18 еды, так что greedy ничем не отличался бы от
-// spamA — а нужны они как раз разные).
-// 9с — время набора B (18 еды) с нуля при production_rate=2.2/с (18/2.2≈8.2с):
-// при более частом взгляде A всегда становится доступна первой и greedy
-// вырождается в spamA (см. комментарий про BOT_FACTORIES ниже).
-var GLANCE_S = 9;
+// вечный спам самого дешёвого типа (см. отчёт ТЗ №02).
+var GLANCE_S = 8;
 
-function makeGreedy() {
+function makeGreedy(balance) {
+  var order = Object.keys(balance.units).sort(function (a, b) {
+    return balance.units[b].cost - balance.units[a].cost;
+  });
   var sinceGlance = GLANCE_S;
   return function (engine, dt) {
     sinceGlance += dt;
@@ -46,22 +42,51 @@ function makeGreedy() {
     sinceGlance = 0;
     var spent = true;
     while (spent) {
-      spent = ['C', 'B', 'A'].some(function (type) { return engine.trySpawnFood(type); });
+      spent = order.some(function (type) { return engine.trySpawnFood(type); });
     }
   };
 }
 
-var BOT_FACTORIES = {
-  greedy: makeGreedy,
-  spamA: function () { return function (engine) { while (engine.trySpawnFood('A')) {} }; },
-  spamC: function () { return function (engine) { while (engine.trySpawnFood('C')) {} }; },
-  idle: function () { return function () {}; }
-};
+function makeSpam(type) {
+  return function () {
+    return function (engine) { while (engine.trySpawnFood(type)) {} };
+  };
+}
 
-function runBot(name, balance) {
+// Круговая закупка: пока не хватает на текущий тип очереди — ждём, не
+// перескакивая на следующий (иначе это уже не «щит, потом стрелки», а снова
+// греedy). Как только хватило — покупаем и переходим к следующему типу.
+function makeRotation(pattern) {
+  return function () {
+    var idx = 0;
+    return function (engine) {
+      if (engine.trySpawnFood(pattern[idx])) {
+        idx = (idx + 1) % pattern.length;
+      }
+    };
+  };
+}
+
+var STRATEGY_NAMES = ['spamA', 'spamB', 'spamC', 'mixShieldArchers', 'mixCheapArchers', 'greedy', 'idle'];
+var PURE = ['spamA', 'spamB', 'spamC'];
+var MIXED = ['mixShieldArchers', 'mixCheapArchers', 'greedy'];
+
+function buildFactories(balance) {
+  return {
+    spamA: makeSpam('A'),
+    spamB: makeSpam('B'),
+    spamC: makeSpam('C'),
+    mixShieldArchers: makeRotation(['C', 'B']),
+    mixCheapArchers: makeRotation(['A', 'B']),
+    greedy: function () { return makeGreedy(balance); },
+    idle: function () { return function () {}; }
+  };
+}
+
+function runStrategy(name, balance, factories) {
   var layout = LaneEngine.computeLayout(REF_W, REF_H, balance.geometry);
   var engine = LaneEngine.createEngine(balance, layout);
-  var decide = BOT_FACTORIES[name]();
+  var decide = factories[name]();
 
   var state = engine.getState();
   while (!state.over && state.timeElapsed <= MAX_TIME) {
@@ -72,12 +97,11 @@ function runBot(name, balance) {
 
   var timedOut = !state.over;
   return {
-    bot: name,
+    name: name,
     result: timedOut ? 'TIMEOUT' : state.result,
     duration: state.timeElapsed,
-    minPlayerBaseHp: state.minPlayerBaseHp,
     minPlayerBaseHpFrac: state.minPlayerBaseHp / state.playerBaseMaxHp,
-    finalEnemyBaseHpFrac: state.enemyBaseHp / state.enemyBaseMaxHp,
+    enemyHpFrac: state.enemyBaseHp / state.enemyBaseMaxHp,
     foodFullFrac: state.timeElapsed > 0 ? state.foodFullTime / state.timeElapsed : 0,
     spawnedByType: state.spawnedByType
   };
@@ -87,10 +111,10 @@ function fmtPct(x) { return (x * 100).toFixed(1) + '%'; }
 function fmtSpawns(s) { return 'A=' + s.A + ' B=' + s.B + ' C=' + s.C; }
 
 function printTable(runs) {
-  var header = ['бот', 'исход', 'время,с', 'мин.HP базы', 'полоса полна', 'спавны'];
+  var header = ['стратегия', 'исход', 'время,с', 'мин.HP базы', 'полоса полна', 'спавны'];
   var rows = runs.map(function (r) {
     return [
-      r.bot,
+      r.name,
       r.result,
       r.duration.toFixed(1),
       fmtPct(r.minPlayerBaseHpFrac),
@@ -111,45 +135,54 @@ function printTable(runs) {
 
 function main() {
   var balance = loadBalance();
-  var runs = ['greedy', 'spamA', 'spamC', 'idle'].map(function (name) {
-    return runBot(name, balance);
-  });
+  var factories = buildFactories(balance);
+  var runs = STRATEGY_NAMES.map(function (name) { return runStrategy(name, balance, factories); });
+  var byName = {};
+  runs.forEach(function (r) { byName[r.name] = r; });
 
   printTable(runs);
 
-  var byName = {};
-  runs.forEach(function (r) { byName[r.bot] = r; });
   var failures = [];
 
-  var g = byName.greedy;
-  if (g.result !== 'WIN') {
-    failures.push('greedy не победил: исход ' + g.result + ' (ожидалась победа)');
-  } else if (g.duration < 100 || g.duration > 130) {
-    failures.push('greedy: длительность ' + g.duration.toFixed(1) + 'с вне диапазона 100–130с');
+  // Пат: любая стратегия без исхода за MAX_TIME — провал сам по себе.
+  runs.forEach(function (r) {
+    if (r.result === 'TIMEOUT') {
+      failures.push(r.name + ': уход в пат — нет исхода за ' + MAX_TIME + 'с (мин.HP игрока ' + fmtPct(r.minPlayerBaseHpFrac) + ', HP врага ' + fmtPct(r.enemyHpFrac) + ')');
+    }
+  });
+
+  var winners = runs.filter(function (r) { return r.result === 'WIN'; });
+  var pureWinners = winners.filter(function (r) { return PURE.indexOf(r.name) !== -1; });
+  var mixedWinners = winners.filter(function (r) { return MIXED.indexOf(r.name) !== -1; });
+
+  var bestPure = pureWinners.length ? pureWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
+  var bestMixed = mixedWinners.length ? mixedWinners.reduce(function (a, b) { return a.duration <= b.duration ? a : b; }) : null;
+
+  // ГЛАВНЫЙ порог: ни одна чистая стратегия не быстрее лучшей смешанной.
+  if (!bestMixed) {
+    failures.push('ГЛАВНЫЙ ПОРОГ: ни одна смешанная стратегия не победила — сравнивать не с чем');
+  } else if (bestPure && bestPure.duration < bestMixed.duration) {
+    failures.push(
+      'ГЛАВНЫЙ ПОРОГ провален: чистая ' + bestPure.name + ' быстрее лучшей смешанной ' +
+      bestMixed.name + ' (' + bestPure.duration.toFixed(1) + 'с против ' + bestMixed.duration.toFixed(1) + 'с)'
+    );
   }
 
-  var i = byName.idle;
-  if (i.result !== 'LOSE') {
-    failures.push('idle не проиграл: исход ' + i.result + ' (ожидалось поражение)');
+  var idle = byName.idle;
+  if (idle.result !== 'LOSE') {
+    failures.push('idle не проиграл: исход ' + idle.result + ' (ожидалось поражение)');
   }
 
-  var c = byName.spamC;
-  if (c.result === 'WIN' && g.result === 'WIN' && c.duration < g.duration * 0.9) {
-    failures.push('spamC строго лучше greedy: spamC=' + c.duration.toFixed(1) + 'с против greedy=' + g.duration.toFixed(1) + 'с (более чем на 10% быстрее)');
-  }
-
-  var a = byName.spamA;
-  var spamAOk = a.result === 'WIN' || a.finalEnemyBaseHpFrac <= 0.25;
-  if (!spamAOk) {
-    failures.push('spamA нежизнеспособен: исход ' + a.result + ', HP базы врага в конце ' + fmtPct(a.finalEnemyBaseHpFrac) + ' (нужно победить или увести ниже 25%)');
-  }
-
-  if (g.foodFullFrac >= 0.15) {
-    failures.push('greedy: доля времени с полной едой ' + fmtPct(g.foodFullFrac) + ' >= 15% — дефицита нет');
-  }
-
-  if (g.minPlayerBaseHpFrac >= 0.6) {
-    failures.push('greedy: минимальный HP базы игрока ' + fmtPct(g.minPlayerBaseHpFrac) + ' >= 60% — напряжения нет');
+  if (bestMixed) {
+    if (bestMixed.duration < 100 || bestMixed.duration > 140) {
+      failures.push('лучшая смешанная (' + bestMixed.name + '): длительность ' + bestMixed.duration.toFixed(1) + 'с вне диапазона 100–140с');
+    }
+    if (bestMixed.foodFullFrac >= 0.15) {
+      failures.push('лучшая смешанная (' + bestMixed.name + '): доля времени с полной едой ' + fmtPct(bestMixed.foodFullFrac) + ' >= 15%');
+    }
+    if (bestMixed.minPlayerBaseHpFrac >= 0.6) {
+      failures.push('лучшая смешанная (' + bestMixed.name + '): минимальный HP базы игрока ' + fmtPct(bestMixed.minPlayerBaseHpFrac) + ' >= 60% — напряжения нет');
+    }
   }
 
   if (failures.length > 0) {
@@ -158,7 +191,9 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nOK: все критерии приёмки ТЗ №02 выполнены.');
+  console.log('\nOK: все критерии приёмки ТЗ №03 выполнены. Лучшая чистая: ' +
+    (bestPure ? bestPure.name + ' ' + bestPure.duration.toFixed(1) + 'с' : '(нет победителей)') +
+    '; лучшая смешанная: ' + bestMixed.name + ' ' + bestMixed.duration.toFixed(1) + 'с.');
 }
 
 main();

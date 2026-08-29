@@ -3,32 +3,36 @@
   "units": {
     "A": {
       "label": "A",
-      "role": "спам",
-      "hp": 20,
-      "damage": 5,
+      "role": "боец",
+      "attack_mode": "melee",
+      "hp": 25,
+      "damage": 6,
       "attack_speed": 0.5,
-      "speed_uw": 1.3,
-      "cost": 8,
+      "speed_uw": 1.2,
+      "cost": 10,
       "color": "#3fa7ff"
     },
     "B": {
       "label": "B",
-      "role": "база армии",
-      "hp": 50,
-      "damage": 8,
-      "attack_speed": 0.85,
-      "speed_uw": 0.8,
-      "cost": 18,
+      "role": "стрелок",
+      "attack_mode": "ranged",
+      "range_uw": 3.5,
+      "hp": 25,
+      "damage": 14,
+      "attack_speed": 0.7,
+      "speed_uw": 0.9,
+      "cost": 16,
       "color": "#5fd15f"
     },
     "C": {
       "label": "C",
-      "role": "таран",
-      "hp": 130,
-      "damage": 10,
-      "attack_speed": 1.3,
-      "speed_uw": 0.45,
-      "cost": 40,
+      "role": "щит",
+      "attack_mode": "melee",
+      "hp": 160,
+      "damage": 6,
+      "attack_speed": 1,
+      "speed_uw": 0.55,
+      "cost": 22,
       "color": "#e0763c"
     }
   },
@@ -48,18 +52,38 @@
     "base_hp": 300,
     "schedule": [
       {
-        "time": 4,
+        "time": 6,
         "type": "A",
         "count": 1
       },
       {
-        "time": 10,
+        "time": 14,
+        "type": "A",
+        "count": 1
+      },
+      {
+        "time": 22,
+        "type": "A",
+        "count": 1
+      },
+      {
+        "time": 28,
+        "type": "A",
+        "count": 1
+      },
+      {
+        "time": 33,
         "type": "B",
         "count": 1
       },
       {
-        "time": 24,
+        "time": 38,
         "type": "A",
+        "count": 1
+      },
+      {
+        "time": 40,
+        "type": "C",
         "count": 1
       },
       {
@@ -68,13 +92,18 @@
         "count": 1
       },
       {
-        "time": 44,
+        "time": 46,
         "type": "A",
         "count": 1
       },
       {
-        "time": 50,
+        "time": 52,
         "type": "B",
+        "count": 1
+      },
+      {
+        "time": 58,
+        "type": "C",
         "count": 1
       },
       {
@@ -83,53 +112,103 @@
         "count": 1
       },
       {
+        "time": 70,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 75,
+        "type": "C",
+        "count": 2
+      },
+      {
         "time": 75,
         "type": "B",
-        "count": 3
+        "count": 1
       },
       {
-        "time": 84,
+        "time": 82,
         "type": "A",
         "count": 1
       },
       {
-        "time": 90,
+        "time": 87,
         "type": "B",
         "count": 1
       },
       {
-        "time": 104,
+        "time": 92,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 97,
         "type": "A",
         "count": 1
       },
       {
-        "time": 124,
-        "type": "A",
-        "count": 1
-      },
-      {
-        "time": 130,
+        "time": 102,
         "type": "B",
+        "count": 1
+      },
+      {
+        "time": 107,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 110,
+        "type": "C",
+        "count": 2
+      },
+      {
+        "time": 110,
+        "type": "B",
+        "count": 2
+      },
+      {
+        "time": 116,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 122,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 128,
+        "type": "A",
+        "count": 1
+      },
+      {
+        "time": 134,
+        "type": "C",
         "count": 1
       },
       {
         "time": 140,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 146,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 152,
         "type": "C",
         "count": 1
       },
       {
-        "time": 144,
+        "time": 158,
         "type": "A",
-        "count": 1
-      },
-      {
-        "time": 156,
-        "type": "C",
         "count": 1
       },
       {
         "time": 164,
-        "type": "A",
+        "type": "C",
         "count": 1
       },
       {
@@ -138,43 +217,58 @@
         "count": 1
       },
       {
-        "time": 172,
-        "type": "C",
-        "count": 1
-      },
-      {
-        "time": 184,
-        "type": "A",
-        "count": 1
-      },
-      {
-        "time": 188,
-        "type": "C",
-        "count": 1
-      },
-      {
-        "time": 204,
-        "type": "A",
-        "count": 1
-      },
-      {
-        "time": 204,
-        "type": "C",
-        "count": 1
-      },
-      {
-        "time": 210,
+        "time": 176,
         "type": "B",
         "count": 1
       },
       {
-        "time": 220,
+        "time": 182,
         "type": "C",
         "count": 1
       },
       {
-        "time": 224,
+        "time": 188,
         "type": "A",
+        "count": 1
+      },
+      {
+        "time": 194,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 200,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 206,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 212,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 218,
+        "type": "A",
+        "count": 1
+      },
+      {
+        "time": 224,
+        "type": "C",
+        "count": 1
+      },
+      {
+        "time": 230,
+        "type": "B",
+        "count": 1
+      },
+      {
+        "time": 236,
+        "type": "B",
         "count": 1
       }
     ]
@@ -199,6 +293,8 @@
     "base_destroy_shake_px": 10,
     "base_destroy_shake_ms": 300,
     "card_shake_px": 6,
-    "card_shake_ms": 150
+    "card_shake_ms": 150,
+    "ranged_shot_ms": 80,
+    "ranged_shot_color": "rgba(255,255,255,0.85)"
   }
 }
