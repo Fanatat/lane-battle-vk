@@ -70,13 +70,13 @@
     "font_scale_timer": 0.22
   },
   "player": {
-    "base_hp": 300,
-    "production_rate": 2.2,
+    "base_hp": 450,
+    "production_rate": 3.46,
     "food_cap": 45,
     "food_start": 8
   },
   "enemy": {
-    "base_hp": 300,
+    "base_hp": 450,
     "schedule": [
       {
         "time": 6,
@@ -117,6 +117,11 @@
         "time": 52,
         "type": "B",
         "count": 1
+      },
+      {
+        "time": 55,
+        "type": "B",
+        "count": 4
       },
       {
         "time": 64,
