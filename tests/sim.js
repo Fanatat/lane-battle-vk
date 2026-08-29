@@ -3,7 +3,9 @@
  * tests/sim.js — турнир стратегий, headless, без браузера.
  * Использует тот же engine.js, что и main.js: правила боя не дублируются.
  * Прогон валится с ненулевым кодом и точечным сообщением, если критерии
- * приёмки ТЗ №04 (раздел 3) не выполнены.
+ * приёмки ТЗ №05 (раздел 1.3, фаза 1) не выполнены. Пороги ТЗ №04 (окно
+ * длительности 90–140с, доля полной еды <15%) этим ТЗ не переподтверждались
+ * и здесь не проверяются — см. отчёт ТЗ05.
  *
  * Запуск: node tests/sim.js
  */
@@ -108,6 +110,25 @@ function runStrategy(name, balance, factories) {
   };
 }
 
+// Расписание бесконечно (ТЗ №05, 1.2): подставляем недостижимо большой HP
+// базы игрока, чтобы бой не кончался поражением, и смотрим, продолжает ли
+// враг спавниться после 300 с бездействия игрока. Отдельный прогон, не
+// стратегия — критерий проверяет само расписание, а не композицию.
+function checkEndlessSchedule(balance) {
+  var patched = JSON.parse(JSON.stringify(balance));
+  patched.player.base_hp = 1e9;
+  var layout = LaneEngine.computeLayout(REF_W, REF_H, patched.geometry);
+  var engine = LaneEngine.createEngine(patched, layout);
+  var state = engine.getState();
+  var countAt300 = 0;
+  while (state.timeElapsed <= 320) {
+    engine.step(DT);
+    state = engine.getState();
+    if (Math.abs(state.timeElapsed - 300) < DT) countAt300 = state.enemySpawnedCount;
+  }
+  return { spawnedBy300: countAt300, spawnedBy320: state.enemySpawnedCount };
+}
+
 function fmtPct(x) { return (x * 100).toFixed(1) + '%'; }
 function fmtSpawns(s) { return 'A=' + s.A + ' B=' + s.B + ' C=' + s.C; }
 
@@ -185,14 +206,46 @@ function main() {
     failures.push('idle не проиграл: исход ' + idle.result + ' (ожидалось поражение)');
   }
 
-  winners.forEach(function (r) {
-    if (r.duration < 90 || r.duration > 140) {
-      failures.push('победитель ' + r.name + ': длительность ' + r.duration.toFixed(1) + 'с вне диапазона 90–140с');
-    }
-    if (r.foodFullFrac >= 0.15) {
-      failures.push('победитель ' + r.name + ': доля времени с полной едой ' + fmtPct(r.foodFullFrac) + ' >= 15%');
-    }
+  // ГРАДИЕНТ СУЩЕСТВУЕТ (главный порог фазы 1, ТЗ №05 п.1.3): среди побед
+  // не менее пяти с мин.HP базы игрока строго в диапазоне 20–80%.
+  var gradientWins = winners.filter(function (r) {
+    return r.minPlayerBaseHpFrac > 0.2 && r.minPlayerBaseHpFrac < 0.8;
   });
+  var distribution = activeRuns.map(function (r) { return r.name + '=' + fmtPct(r.minPlayerBaseHpFrac); }).join(', ');
+  if (gradientWins.length < 5) {
+    failures.push(
+      'ГРАДИЕНТ провален (главный порог фазы 1): среди ' + winners.length + ' побед только ' + gradientWins.length +
+      ' с мин.HP базы игрока в 20–80% — нужно не менее 5. Распределение мин.HP по всем 6 активным: ' + distribution
+    );
+  }
+
+  // Бинарности больше нет: доля прогонов (из 6 активных) с мин.HP РОВНО
+  // 100% или РОВНО 0% — менее половины.
+  var binaryCount = activeRuns.filter(function (r) {
+    return r.minPlayerBaseHpFrac === 1 || r.minPlayerBaseHpFrac === 0;
+  }).length;
+  if (binaryCount / activeRuns.length >= 0.5) {
+    failures.push(
+      'БИНАРНОСТЬ не снята: ' + binaryCount + ' из ' + activeRuns.length +
+      ' активных прогонов дали мин.HP ровно 100% или 0% (>= половины). Распределение: ' + distribution
+    );
+  }
+
+  // Первый враг не позже 6-й секунды.
+  var firstWaveTime = balance.enemy.schedule.length ? balance.enemy.schedule[0].time : Infinity;
+  if (firstWaveTime > 6) {
+    failures.push('Первый враг появляется на ' + firstWaveTime + 'с — позже порога в 6с');
+  }
+
+  // Расписание бесконечно: при бездействии игрока враг продолжает
+  // спавниться и после 300с.
+  var endless = checkEndlessSchedule(balance);
+  if (!(endless.spawnedBy320 > endless.spawnedBy300)) {
+    failures.push(
+      'Расписание НЕ бесконечно: спавнов к 300с=' + endless.spawnedBy300 + ', к 320с=' + endless.spawnedBy320 +
+      ' — спавн прекращается вместо продолжения по формуле'
+    );
+  }
 
   if (failures.length > 0) {
     console.error('\nПРОВАЛ (' + failures.length + '):');
@@ -200,7 +253,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nOK: все критерии приёмки ТЗ №04 выполнены. Побеждают ' + winners.length + ' из 6: ' +
+  console.log('\nOK: все критерии приёмки ТЗ №05 (фаза 1) выполнены. Побеждают ' + winners.length + ' из 6: ' +
     winners.map(function (r) { return r.name + ' ' + r.duration.toFixed(1) + 'с'; }).join(', ') + '.');
 }
 

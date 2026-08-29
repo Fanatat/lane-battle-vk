@@ -49,6 +49,7 @@
   "geometry": {
     "queue_gap_uw": 1.05,
     "attack_range_uw": 1.1,
+    "front_depth": 4.7,
     "siege_range_uw": 1.15,
     "unit_height_screen_fraction": 0.125
   },
@@ -62,17 +63,17 @@
     "base_hp": 300,
     "schedule": [
       {
+        "time": 6,
+        "type": "A",
+        "count": 1
+      },
+      {
         "time": 14,
         "type": "A",
         "count": 1
       },
       {
         "time": 22,
-        "type": "A",
-        "count": 1
-      },
-      {
-        "time": 28,
         "type": "A",
         "count": 1
       },
@@ -236,7 +237,17 @@
         "type": "B",
         "count": 1
       }
-    ]
+    ],
+    "endless": {
+      "_comment": "После последней записи schedule волны продолжают идти по формуле: интервал линейно сокращается от interval_start_s до пола interval_min_s, состав циклится по pattern, счёт растёт на 1 каждые count_growth_every_n_waves волн до потолка count_growth_max.",
+      "pattern": ["B", "C", "A", "B", "C"],
+      "count_base": 1,
+      "count_growth_every_n_waves": 5,
+      "count_growth_max": 2,
+      "interval_start_s": 9,
+      "interval_step_s": 0.2,
+      "interval_min_s": 4
+    }
   },
   "speed_levels": [
     1,

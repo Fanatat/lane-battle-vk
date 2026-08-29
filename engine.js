@@ -75,12 +75,15 @@
         timeElapsed: 0,
         scheduleIndex: 0,
         spawnedCount: 0, spawnedByType: { A: 0, B: 0, C: 0 },
+        enemySpawnedCount: 0,
         killedCount: 0,
         over: false, result: null,
         hitstopMs: 0,
         shakeMag: 0, shakeMs: 0, shakeTotalMs: 0,
         dpsAccum: 0, dpsLastSecond: 0, dpsSecondFloor: 0,
-        foodFullTime: 0, minPlayerBaseHp: 0
+        foodFullTime: 0, minPlayerBaseHp: 0,
+        nextEndlessTime: 0, endlessWaveIndex: 0,
+        nextWaveType: null, nextWaveTime: null
       };
     }
 
@@ -94,6 +97,11 @@
       state.playerBaseHp = state.playerBaseMaxHp = balance.player.base_hp;
       state.enemyBaseHp = state.enemyBaseMaxHp = balance.enemy.base_hp;
       state.minPlayerBaseHp = state.playerBaseHp;
+      var sched = balance.enemy.schedule;
+      state.nextEndlessTime = (sched.length ? sched[sched.length - 1].time : 0) +
+        (balance.enemy.endless ? balance.enemy.endless.interval_start_s : 0);
+      state.endlessWaveIndex = 0;
+      if (sched.length) { state.nextWaveType = sched[0].type; state.nextWaveTime = sched[0].time; }
     }
 
     function endBattle(result) {
@@ -157,6 +165,8 @@
       if (isPlayer) {
         state.spawnedCount++;
         if (state.spawnedByType[type] !== undefined) state.spawnedByType[type]++;
+      } else {
+        state.enemySpawnedCount++;
       }
       return slot;
     }
@@ -177,6 +187,50 @@
         for (var i = 0; i < wave.count; i++) spawnUnit(false, wave.type);
         state.scheduleIndex++;
       }
+      processEndlessSchedule();
+      updateNextWavePreview();
+    }
+
+    // Расписание не кончается: как только напечённый массив исчерпан, волны
+    // продолжают идти по формуле от номера волны — интервал линейно сокращается
+    // к полу, состав тяжелеет (счёт растёт со ступенями), тип — циклический
+    // паттерн. Всё — числа из balance.json, формула не генерирует контент,
+    // только раскладывает по времени.
+    function processEndlessSchedule() {
+      var sched = balance.enemy.schedule;
+      var endless = balance.enemy.endless;
+      if (!endless) return;
+      var lastTime = sched.length ? sched[sched.length - 1].time : 0;
+      if (state.nextEndlessTime < lastTime) state.nextEndlessTime = lastTime + endless.interval_start_s;
+
+      while (state.nextEndlessTime <= state.timeElapsed) {
+        var waveIndex = state.endlessWaveIndex;
+        var type = endless.pattern[waveIndex % endless.pattern.length];
+        var extra = Math.min(endless.count_growth_max, Math.floor(waveIndex / endless.count_growth_every_n_waves));
+        var count = endless.count_base + extra;
+        for (var i = 0; i < count; i++) spawnUnit(false, type);
+
+        var interval = endless.interval_start_s - waveIndex * endless.interval_step_s;
+        if (interval < endless.interval_min_s) interval = endless.interval_min_s;
+        state.nextEndlessTime += interval;
+        state.endlessWaveIndex++;
+      }
+    }
+
+    // Превью следующей волны (фаза 2 ТЗ №05) — тип и время следующего спавна,
+    // читается из того же источника расписания, что и реальный спавн, не
+    // дублирует данные.
+    function updateNextWavePreview() {
+      var sched = balance.enemy.schedule;
+      if (state.scheduleIndex < sched.length) {
+        state.nextWaveType = sched[state.scheduleIndex].type;
+        state.nextWaveTime = sched[state.scheduleIndex].time;
+        return;
+      }
+      var endless = balance.enemy.endless;
+      if (!endless) { state.nextWaveType = null; state.nextWaveTime = null; return; }
+      state.nextWaveType = endless.pattern[state.endlessWaveIndex % endless.pattern.length];
+      state.nextWaveTime = state.nextEndlessTime;
     }
 
     function buildOrder(pool, order, descending) {
@@ -236,6 +290,13 @@
       var n = buildOrder(pool, order, isPlayer);
       var siegeRangePx = balance.geometry.siege_range_uw * layout.unitSize;
       var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
+      // Ширина фронта (ТЗ №05, 1.1): радиус ближней атаки расширен так, чтобы
+      // до front_depth юнитов очереди одновременно доставали до контакта —
+      // юнит позади не блокируется союзником впереди, очередь остаётся только
+      // визуальной (шаг ниже по-прежнему держит gap).
+      var contactRangePx = balance.geometry.attack_range_uw * layout.unitSize;
+      var meleeRangePx = (balance.geometry.attack_range_uw +
+        (balance.geometry.front_depth - 1) * balance.geometry.queue_gap_uw) * layout.unitSize;
       var otherPool = isPlayer ? enemyUnits : playerUnits;
       var dir = isPlayer ? 1 : -1;
       var frontEdge = isPlayer ? layout.enemyBase.frontX : layout.playerBase.frontX;
@@ -260,8 +321,9 @@
         // Радиус атаки — свой у каждой роли: ближний бой берёт общую
         // geometry.attack_range_uw, стрелок — собственный unit.range_uw.
         var isRanged = spec.attack_mode === 'ranged';
-        var ownRangePx = (isRanged ? spec.range_uw : balance.geometry.attack_range_uw) * layout.unitSize;
+        var ownRangePx = isRanged ? spec.range_uw * layout.unitSize : meleeRangePx;
         var found = nearestEnemy(u, otherPool);
+        var ahead = i > 0 ? order[i - 1] : null;
         if (found && found.dist <= ownRangePx) {
           u.state = 'ATTACK';
           if (u.cooldown <= 0) {
@@ -269,11 +331,24 @@
             applyDamage(found.unit, spec.damage, isPlayer);
             if (isRanged) onRangedShot(u.x, u.y, found.unit.x, found.unit.y);
           }
+          // Задние ряды бьют с расширенного радиуса, но продолжают идти к
+          // истинной дистанции контакта, пока не дойдут — иначе фронт
+          // замирает на границе meleeRangePx и никогда не сжимается
+          // (перманентный пат). Стрелка это не касается: его логика
+          // "остановился в своей дистанции — дальше не идёт" не трогается.
+          if (!isRanged && found.dist > contactRangePx) {
+            var advancePx = spec.speed_uw * layout.unitSize;
+            var ax = u.x + dir * advancePx * dt;
+            if (ahead) {
+              if (isPlayer) ax = Math.min(ax, ahead.x - gapPx);
+              else ax = Math.max(ax, ahead.x + gapPx);
+            }
+            u.x = ax;
+          }
           continue;
         }
 
         u.state = 'MOVE';
-        var ahead = i > 0 ? order[i - 1] : null;
         var speedPx = spec.speed_uw * layout.unitSize;
         var nx = u.x + dir * speedPx * dt;
         if (ahead) {
