@@ -9,10 +9,12 @@
   var ctx = canvas.getContext('2d');
   var dpr = Math.max(1, window.devicePixelRatio || 1);
 
-  var POOL_SIZE = 220;
   var DMG_POOL_SIZE = 96;
 
   var balance = null;
+  var engine = null;
+  var speedIndex = 0; // index into balance.speed_levels
+  var paused = false;
 
   // ---- layout (recomputed on resize) ----
   var layout = {
@@ -23,49 +25,15 @@
     playerSpawnX: 0, enemySpawnX: 0
   };
 
-  function makePool(size) {
+  function makeDmgPool(size) {
     var arr = new Array(size);
     for (var i = 0; i < size; i++) {
-      arr[i] = {
-        active: false, type: null, x: 0, y: 0, hp: 0, maxHp: 0,
-        cooldown: 0, state: 'MOVE', squashT: 0, flashT: 0
-      };
+      arr[i] = { active: false, x: 0, y: 0, vy: 0, age: 0, maxAge: 0, value: 0 };
     }
     return arr;
   }
 
-  var playerUnits = makePool(POOL_SIZE);
-  var enemyUnits = makePool(POOL_SIZE);
-  var dmgNumbers = makePool(DMG_POOL_SIZE).map(function (u) {
-    u.vy = 0; u.age = 0; u.maxAge = 0; u.value = 0; u.crit = false; return u;
-  });
-
-  // scratch order arrays reused every frame — no `new` in the loop
-  var playerOrder = new Array(POOL_SIZE);
-  var enemyOrder = new Array(POOL_SIZE);
-
-  var state = null;
-
-  function freshState() {
-    return {
-      food: 0,
-      foodCap: 0,
-      productionRate: 0,
-      playerBaseHp: 0, playerBaseMaxHp: 0,
-      enemyBaseHp: 0, enemyBaseMaxHp: 0,
-      timeElapsed: 0,
-      scheduleIndex: 0,
-      speedIndex: 0, // index into balance.speed_levels
-      spawnedCount: 0,
-      killedCount: 0,
-      over: false,
-      result: null, // 'WIN' | 'LOSE'
-      hitstopMs: 0,
-      shakeMag: 0, shakeMs: 0, shakeTotalMs: 0,
-      dpsAccum: 0, dpsLastSecond: 0, dpsSecondFloor: 0,
-      paused: false
-    };
-  }
+  var dmgNumbers = makeDmgPool(DMG_POOL_SIZE);
 
   // ---------------- loading ----------------
 
@@ -76,6 +44,10 @@
     })
     .then(function (data) {
       balance = data;
+      engine = window.LaneEngine.createEngine(balance, layout, {
+        onDamage: spawnDamageNumber,
+        onBaseDestroyed: showPopup
+      });
       resize();
       restartBattle();
       wireInput();
@@ -128,10 +100,10 @@
 
     // reposition existing units proportionally so a mid-battle resize (e.g. rotate) doesn't break the lane
     var newLaneWidth = layout.enemyBase.frontX - layout.playerBase.frontX;
-    if (oldLaneWidth > 1) {
+    if (oldLaneWidth > 1 && engine) {
       var ratio = newLaneWidth / oldLaneWidth;
-      remapUnitsX(playerUnits, oldLaneStart, ratio);
-      remapUnitsX(enemyUnits, oldLaneStart, ratio);
+      remapUnitsX(engine.getPlayerUnits(), oldLaneStart, ratio);
+      remapUnitsX(engine.getEnemyUnits(), oldLaneStart, ratio);
     }
   }
 
@@ -144,14 +116,6 @@
   }
 
   // ---------------- pooling helpers ----------------
-
-  function findFreeSlot(pool) {
-    for (var i = 0; i < pool.length; i++) {
-      if (!pool[i].active) return pool[i];
-    }
-    console.warn('Пул юнитов исчерпан (' + pool.length + ') — спавн пропущен.');
-    return null;
-  }
 
   function findFreeDmg() {
     for (var i = 0; i < dmgNumbers.length; i++) {
@@ -170,214 +134,18 @@
   // ---------------- battle lifecycle ----------------
 
   function restartBattle() {
-    for (var i = 0; i < playerUnits.length; i++) playerUnits[i].active = false;
-    for (var j = 0; j < enemyUnits.length; j++) enemyUnits[j].active = false;
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
-
-    var prevSpeedIndex = state ? state.speedIndex : 0;
-    state = freshState();
-    state.speedIndex = prevSpeedIndex;
-    state.food = balance.player.food_start;
-    state.foodCap = balance.player.food_cap;
-    state.productionRate = balance.player.production_rate;
-    state.playerBaseHp = state.playerBaseMaxHp = balance.player.base_hp;
-    state.enemyBaseHp = state.enemyBaseMaxHp = balance.enemy.base_hp;
-
+    engine.restart();
     hidePopup();
     updateSpeedButton();
     updateHud();
   }
 
-  function endBattle(result) {
-    if (state.over) return;
-    state.over = true;
-    state.result = result;
-    showPopup(result);
-  }
-
-  // ---------------- spawning ----------------
-
-  function spawnUnit(isPlayer, type) {
-    var pool = isPlayer ? playerUnits : enemyUnits;
-    var spec = balance.units[type];
-    var slot = findFreeSlot(pool);
-    if (!slot) return null;
-
-    var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
-    var x;
-    if (isPlayer) {
-      x = layout.playerSpawnX;
-      var minX = minActiveX(playerUnits);
-      if (minX !== null && minX - x < gapPx) x = minX - gapPx;
-    } else {
-      x = layout.enemySpawnX;
-      var maxX = maxActiveX(enemyUnits);
-      if (maxX !== null && x - maxX < gapPx) x = maxX + gapPx;
-    }
-
-    slot.active = true;
-    slot.type = type;
-    slot.x = x;
-    slot.y = layout.laneY;
-    slot.hp = spec.hp;
-    slot.maxHp = spec.hp;
-    slot.cooldown = 0;
-    slot.state = 'MOVE';
-    slot.squashT = balance.juice.spawn_squash_ms / 1000;
-    slot.flashT = 0;
-    state.spawnedCount++;
-    return slot;
-  }
-
-  function minActiveX(pool) {
-    var min = null;
-    for (var i = 0; i < pool.length; i++) {
-      if (pool[i].active && (min === null || pool[i].x < min)) min = pool[i].x;
-    }
-    return min;
-  }
-  function maxActiveX(pool) {
-    var max = null;
-    for (var i = 0; i < pool.length; i++) {
-      if (pool[i].active && (max === null || pool[i].x > max)) max = pool[i].x;
-    }
-    return max;
-  }
-
   function trySpawnFromCard(type) {
-    if (state.over) return;
-    var cost = balance.units[type].cost;
-    if (state.food < cost) {
-      shakeCard(type);
-      return;
-    }
-    state.food -= cost;
-    spawnUnit(true, type);
-  }
-
-  // ---------------- enemy AI ----------------
-
-  function processSchedule() {
-    var sched = balance.enemy.schedule;
-    while (state.scheduleIndex < sched.length && sched[state.scheduleIndex].time <= state.timeElapsed) {
-      var wave = sched[state.scheduleIndex];
-      for (var i = 0; i < wave.count; i++) spawnUnit(false, wave.type);
-      state.scheduleIndex++;
-    }
-  }
-
-  // ---------------- combat resolution ----------------
-
-  function buildOrder(pool, order, descending) {
-    var n = 0;
-    for (var i = 0; i < pool.length; i++) {
-      if (pool[i].active) order[n++] = pool[i];
-    }
-    var slice = order.slice(0, n);
-    slice.sort(function (a, b) { return descending ? b.x - a.x : a.x - b.x; });
-    for (var j = 0; j < n; j++) order[j] = slice[j];
-    return n;
-  }
-
-  function nearestEnemy(unit, otherPool) {
-    var best = null, bestDist = Infinity;
-    for (var i = 0; i < otherPool.length; i++) {
-      var o = otherPool[i];
-      if (!o.active) continue;
-      var d = Math.abs(o.x - unit.x);
-      if (d < bestDist) { bestDist = d; best = o; }
-    }
-    return best ? { unit: best, dist: bestDist } : null;
-  }
-
-  function applyDamage(target, amount, isPlayerAttacking) {
-    target.hp -= amount;
-    target.flashT = balance.juice.hit_flash_ms / 1000;
-    spawnDamageNumber(target.x, target.y - layout.unitSize * 0.65, amount);
-    if (isPlayerAttacking) {
-      state.dpsAccum += amount;
-    }
-    if (target.hp <= 0) {
-      target.active = false;
-      state.killedCount++;
-      triggerHitstop(balance.juice.death_hitstop_ms);
-      triggerShake(balance.juice.death_shake_px, balance.juice.death_shake_ms);
-    }
-  }
-
-  function damageBase(isPlayerBase, amount) {
-    if (isPlayerBase) {
-      state.playerBaseHp = Math.max(0, state.playerBaseHp - amount);
-    } else {
-      state.enemyBaseHp = Math.max(0, state.enemyBaseHp - amount);
-      state.dpsAccum += amount;
-    }
-    triggerShake(balance.juice.base_hit_shake_px, balance.juice.base_hit_shake_ms);
-    if ((isPlayerBase && state.playerBaseHp <= 0) || (!isPlayerBase && state.enemyBaseHp <= 0)) {
-      triggerHitstop(balance.juice.base_destroy_hitstop_ms);
-      triggerShake(balance.juice.base_destroy_shake_px, balance.juice.base_destroy_shake_ms);
-      endBattle(isPlayerBase ? 'LOSE' : 'WIN');
-    }
-  }
-
-  function simulateSide(pool, order, isPlayer, dt) {
-    var n = buildOrder(pool, order, isPlayer /* player front = max x */);
-    var attackRangePx = balance.geometry.attack_range_uw * layout.unitSize;
-    var siegeRangePx = balance.geometry.siege_range_uw * layout.unitSize;
-    var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
-    var otherPool = isPlayer ? enemyUnits : playerUnits;
-    var dir = isPlayer ? 1 : -1;
-    var frontEdge = isPlayer ? layout.enemyBase.frontX : layout.playerBase.frontX;
-
-    for (var i = 0; i < n; i++) {
-      var u = order[i];
-      var spec = balance.units[u.type];
-      if (u.cooldown > 0) u.cooldown -= dt;
-
-      var found = nearestEnemy(u, otherPool);
-      if (found && found.dist <= attackRangePx) {
-        u.state = 'ATTACK';
-        if (u.cooldown <= 0) {
-          u.cooldown = spec.attack_speed;
-          applyDamage(found.unit, spec.damage, isPlayer);
-        }
-        continue;
-      }
-
-      var distToBase = isPlayer ? (frontEdge - u.x) : (u.x - frontEdge);
-      if (distToBase <= siegeRangePx) {
-        u.state = 'SIEGE';
-        if (u.cooldown <= 0) {
-          u.cooldown = spec.attack_speed;
-          damageBase(!isPlayer, spec.damage);
-        }
-        continue;
-      }
-
-      u.state = 'MOVE';
-      var ahead = i > 0 ? order[i - 1] : null;
-      var speedPx = spec.speed_uw * layout.unitSize;
-      var nx = u.x + dir * speedPx * dt;
-      if (ahead) {
-        if (isPlayer) nx = Math.min(nx, ahead.x - gapPx);
-        else nx = Math.max(nx, ahead.x + gapPx);
-      }
-      u.x = nx;
-    }
+    if (!engine.trySpawnFood(type)) shakeCard(type);
   }
 
   // ---------------- juice ----------------
-
-  function triggerHitstop(ms) {
-    state.hitstopMs = Math.max(state.hitstopMs, ms);
-  }
-  function triggerShake(px, ms) {
-    if (px >= state.shakeMag) {
-      state.shakeMag = px;
-      state.shakeMs = ms;
-      state.shakeTotalMs = ms;
-    }
-  }
 
   function shakeCard(type) {
     var el = document.getElementById('card-' + type);
@@ -398,36 +166,26 @@
     if (lastTs === null) lastTs = ts;
     var realDt = Math.min(0.05, (ts - lastTs) / 1000);
     lastTs = ts;
-    if (state.paused) return;
+    if (paused) return;
 
     update(realDt);
     render();
   }
 
   function update(realDt) {
+    var state = engine.getState();
     // juice timers run in real time so hit-stop still shows flash/shake while sim is frozen
     updateJuiceTimers(realDt);
 
-    var speedMult = balance.speed_levels[state.speedIndex];
+    var speedMult = balance.speed_levels[speedIndex];
     var simDt = state.hitstopMs > 0 ? 0 : realDt * speedMult;
 
     if (!state.over) {
-      state.timeElapsed += simDt;
-      state.food = Math.min(state.foodCap, state.food + state.productionRate * simDt);
-
-      var prevFloor = state.dpsSecondFloor;
-      var newFloor = Math.floor(state.timeElapsed);
-      if (newFloor > prevFloor) {
-        state.dpsLastSecond = state.dpsAccum;
-        state.dpsAccum = 0;
-        state.dpsSecondFloor = newFloor;
-      }
-
-      processSchedule();
-      simulateSide(playerUnits, playerOrder, true, simDt);
-      simulateSide(enemyUnits, enemyOrder, false, simDt);
+      engine.step(simDt);
     }
 
+    var playerUnits = engine.getPlayerUnits();
+    var enemyUnits = engine.getEnemyUnits();
     for (var i = 0; i < playerUnits.length; i++) tickUnitAnim(playerUnits[i], realDt);
     for (var j = 0; j < enemyUnits.length; j++) tickUnitAnim(enemyUnits[j], realDt);
     for (var k = 0; k < dmgNumbers.length; k++) tickDamageNumber(dmgNumbers[k], realDt);
@@ -436,6 +194,7 @@
   }
 
   function updateJuiceTimers(realDt) {
+    var state = engine.getState();
     if (state.hitstopMs > 0) {
       state.hitstopMs -= realDt * 1000;
       if (state.hitstopMs < 0) state.hitstopMs = 0;
@@ -462,6 +221,9 @@
   // ---------------- rendering ----------------
 
   function render() {
+    var state = engine.getState();
+    var playerUnits = engine.getPlayerUnits();
+    var enemyUnits = engine.getEnemyUnits();
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, layout.w, layout.h);
@@ -597,6 +359,7 @@
   var restartBtnEl = document.getElementById('restartBtn');
 
   function updateHud() {
+    var state = engine.getState();
     foodValueEl.textContent = Math.floor(state.food);
     foodCapEl.textContent = state.foodCap;
     foodBarFillEl.style.width = (state.foodCap > 0 ? (state.food / state.foodCap) * 100 : 0) + '%';
@@ -611,10 +374,11 @@
   }
 
   function updateSpeedButton() {
-    speedBtnEl.textContent = '×' + balance.speed_levels[state.speedIndex];
+    speedBtnEl.textContent = '×' + balance.speed_levels[speedIndex];
   }
 
   function showPopup(result) {
+    var state = engine.getState();
     popupTitleEl.textContent = result === 'WIN' ? 'Победа' : 'Поражение';
     var seconds = state.timeElapsed.toFixed(1);
     popupStatsEl.textContent =
@@ -629,7 +393,7 @@
 
   function wireInput() {
     speedBtnEl.onclick = function () {
-      state.speedIndex = (state.speedIndex + 1) % balance.speed_levels.length;
+      speedIndex = (speedIndex + 1) % balance.speed_levels.length;
       updateSpeedButton();
     };
     restartBtnEl.onclick = function () {
@@ -645,10 +409,10 @@
 
   window.Game = {
     getBalance: function () { return balance; },
-    getState: function () { return state; },
+    getState: function () { return engine.getState(); },
     restart: function () { restartBattle(); },
-    setPaused: function (p) { state.paused = p; },
-    spawnEnemyDebug: function (type) { spawnUnit(false, type); },
-    spawnPlayerDebug: function (type) { spawnUnit(true, type); }
+    setPaused: function (p) { paused = p; },
+    spawnEnemyDebug: function (type) { engine.spawnEnemy(type); },
+    spawnPlayerDebug: function (type) { engine.spawnPlayer(type); }
   };
 })();
