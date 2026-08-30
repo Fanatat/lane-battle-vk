@@ -17,14 +17,15 @@
   var speedIndex = 0; // index into balance.speed_levels
   var paused = false;
 
-  // ---- layout (recomputed on resize) ----
-  var layout = {
-    w: 0, h: 0, unitSize: 0,
-    laneY: 0,
-    playerBase: { x: 0, y: 0, w: 0, h: 0, frontX: 0 },
-    enemyBase: { x: 0, y: 0, w: 0, h: 0, frontX: 0 },
-    playerReinforceX: 0, enemyReinforceX: 0, reinforceOffsetPx: 0
-  };
+  // Джиттер (ТЗ №07, блок 2): по умолчанию каждый бой — новый сид, для
+  // воспроизведения бага — ?seed=N или ?deterministic=1 в адресе (дефолт #6).
+  var urlParams = new URLSearchParams(window.location.search);
+  var deterministic = urlParams.get('deterministic') === '1';
+  var fixedSeed = urlParams.has('seed') ? parseInt(urlParams.get('seed'), 10) : null;
+  function rollSeed() { return fixedSeed !== null ? fixedSeed : Math.floor(Math.random() * 1e9); }
+
+  // ---- layout (recomputed on resize, полностью из LaneEngine.computeLayout) ----
+  var layout = {};
 
   function makeDmgPool(size) {
     var arr = new Array(size);
@@ -56,10 +57,12 @@
     .then(function (data) {
       balance = data;
       engine = window.LaneEngine.createEngine(balance, layout, {
-        onDamage: spawnDamageNumber,
+        onDamage: function (logicalX, y, value) { spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value); },
         onBaseDestroyed: showPopup,
-        onRangedShot: spawnShot
-      });
+        onRangedShot: function (fromX, fromY, toX, toY) {
+          spawnShot(window.LaneEngine.logicalToPx(layout, fromX), fromY, window.LaneEngine.logicalToPx(layout, toX), toY);
+        }
+      }, { seed: rollSeed(), deterministic: deterministic });
       resize();
       restartBattle();
       wireInput();
@@ -77,6 +80,9 @@
 
   // ---------------- layout ----------------
 
+  // ТЗ №07, блок 1: позиции юнитов — логические координаты 0..lane_length_logical,
+  // не зависят от вьюпорта, поэтому ресайз/поворот экрана больше не требует
+  // пересчёта позиций юнитов — только геометрии отрисовки.
   function resize() {
     var cssW = canvas.clientWidth || window.innerWidth;
     var cssH = canvas.clientHeight || Math.round(window.innerHeight * 0.6);
@@ -84,55 +90,8 @@
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
 
-    var oldLaneStart = layout.playerBase.frontX;
-    var oldLaneEnd = layout.enemyBase.frontX;
-    var oldLaneWidth = oldLaneEnd - oldLaneStart;
-
-    var unitSize = cssH * (balance.geometry.unit_height_screen_fraction);
-    var baseWidth = unitSize * 0.55;
-    var baseHeight = unitSize * 1.9;
-    var margin = unitSize * 0.15;
-
-    layout.w = cssW; layout.h = cssH; layout.unitSize = unitSize;
-    layout.laneY = cssH / 2;
-    layout.playerBase.x = margin;
-    layout.playerBase.y = layout.laneY - baseHeight / 2;
-    layout.playerBase.w = baseWidth;
-    layout.playerBase.h = baseHeight;
-    layout.playerBase.frontX = margin + baseWidth;
-
-    layout.enemyBase.w = baseWidth;
-    layout.enemyBase.h = baseHeight;
-    layout.enemyBase.x = cssW - margin - baseWidth;
-    layout.enemyBase.y = layout.laneY - baseHeight / 2;
-    layout.enemyBase.frontX = cssW - margin - baseWidth;
-
-    // Дистанция подкрепления (ТЗ №06, блок 1) — та же формула, что в
-    // engine.js computeLayout, чтобы браузер и headless-прогон не расходились.
-    var laneLengthPx = layout.enemyBase.frontX - layout.playerBase.frontX;
-    var reinforceOffsetPx = Math.min(
-      balance.geometry.reinforce_offset_uw * unitSize,
-      laneLengthPx * 0.2
-    );
-    layout.reinforceOffsetPx = reinforceOffsetPx;
-    layout.playerReinforceX = layout.playerBase.frontX + reinforceOffsetPx;
-    layout.enemyReinforceX = layout.enemyBase.frontX - reinforceOffsetPx;
-
-    // reposition existing units proportionally so a mid-battle resize (e.g. rotate) doesn't break the lane
-    var newLaneWidth = layout.enemyBase.frontX - layout.playerBase.frontX;
-    if (oldLaneWidth > 1 && engine) {
-      var ratio = newLaneWidth / oldLaneWidth;
-      remapUnitsX(engine.getPlayerUnits(), oldLaneStart, ratio);
-      remapUnitsX(engine.getEnemyUnits(), oldLaneStart, ratio);
-    }
-  }
-
-  function remapUnitsX(pool, oldLaneStart, ratio) {
-    for (var i = 0; i < pool.length; i++) {
-      var u = pool[i];
-      if (!u.active) continue;
-      u.x = layout.playerBase.frontX + (u.x - oldLaneStart) * ratio;
-    }
+    var newLayout = window.LaneEngine.computeLayout(cssW, cssH, balance.geometry);
+    Object.keys(newLayout).forEach(function (k) { layout[k] = newLayout[k]; });
   }
 
   // ---------------- pooling helpers ----------------
@@ -169,7 +128,7 @@
   function restartBattle() {
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
     for (var m = 0; m < shots.length; m++) shots[m].active = false;
-    engine.restart();
+    engine.restart(rollSeed());
     hidePopup();
     updateSpeedButton();
     updateHud();
@@ -350,7 +309,7 @@
 
     var bd = balance.base_defense;
     if (!bd) return;
-    var rangePx = bd.range_uw * layout.unitSize;
+    var rangePx = bd.range_logical * layout.pxPerLogical;
     drawBaseDefenseArc(layout.playerBase.frontX, balance.sides.player, rangePx);
     drawBaseDefenseArc(layout.enemyBase.frontX, balance.sides.enemy, rangePx);
   }
@@ -457,9 +416,10 @@
       var t = 1 - (u.squashT / (balance.juice.spawn_squash_ms / 1000));
       squash = balance.juice.spawn_squash_scale + (1 - balance.juice.spawn_squash_scale) * t;
     }
+    var sx = window.LaneEngine.logicalToPx(layout, u.x); // ТЗ №07, блок 1: u.x — логическая координата
     var w = size * 0.82;
     var h = size * squash;
-    var x = u.x - w / 2;
+    var x = sx - w / 2;
     var groundY = u.y + size / 2; // fixed baseline: unit grows upward from the lane as it squashes
     var y = groundY - h;
 
@@ -483,9 +443,9 @@
     ctx.font = 'bold ' + Math.round(size * 0.4) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(u.type, u.x, y + h / 2 + h * 0.08);
+    ctx.fillText(u.type, sx, y + h / 2 + h * 0.08);
 
-    drawHpBar(u.x - w / 2, y - size * 0.16, w, size * 0.1, u.hp, u.maxHp, false);
+    drawHpBar(sx - w / 2, y - size * 0.16, w, size * 0.1, u.hp, u.maxHp, false);
   }
 
   function drawDamageNumber(d) {
@@ -581,6 +541,8 @@
     restart: function () { restartBattle(); },
     setPaused: function (p) { paused = p; },
     spawnEnemyDebug: function (type) { engine.spawnEnemy(type); },
-    spawnPlayerDebug: function (type) { engine.spawnPlayer(type); }
+    spawnPlayerDebug: function (type) { engine.spawnPlayer(type); },
+    isDeterministic: function () { return engine.isDeterministic(); },
+    getSeed: function () { return engine.getSeed(); }
   };
 })();

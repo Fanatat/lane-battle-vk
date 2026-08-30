@@ -2,6 +2,16 @@
  * engine.js — ядро симуляции боя, без DOM/Canvas.
  * Общий модуль для main.js (браузер) и tests/sim.js (Node) — правила боя
  * живут в одном месте, чтобы headless-прогон и то, что видит игрок, не расходились.
+ *
+ * ТЗ №07, блок 1: боевые дистанции живут в ЛОГИЧЕСКИХ единицах — доле
+ * фиксированной длины полосы (geometry.lane_length_logical, 100 условных
+ * единиц), а не в пикселях экрана. Позиция юнита (unit.x) — тоже логическая
+ * координата 0..lane_length_logical (0 = дверь базы игрока, 100 = дверь базы
+ * врага). Экран участвует только в render-конвертации через
+ * layout.pxPerLogical — величину, которую сама симуляция никогда не читает.
+ * unitSize/baseWidth/margin остаются пиксельными: это художественный размер
+ * (высота юнита от высоты экрана), к длине полосы отношения не имеет и вне
+ * объёма фазы 07 (см. ТЗ, раздел 5).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -25,11 +35,29 @@
     return arr;
   }
 
+  // Детерминированный PRNG (mulberry32), сид — целое число. Источник
+  // вариативности турнира (ТЗ №07, блок 2): используется и для случайного
+  // выбора цели среди равноценных внутри движка, и (снаружи, в tests/sim.js)
+  // для джиттера интервала решений стратегий. Не солвер и не генератор
+  // контента — детерминированный ГПСЧ для замера, вход и выход которого
+  // полностью числовые.
+  function createRng(seed) {
+    var a = (seed >>> 0) || 1;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   // ---------------- layout (pure geometry, no canvas) ----------------
 
-  // Reproduces exactly the math main.js's resize() uses to turn a CSS
-  // viewport into lane positions, so a headless sim at a given resolution
-  // matches what the browser would compute for the same resolution.
+  // Художественная (пиксельная) геометрия — высота юнита и размеры баз от
+  // высоты экрана — плюс мост между логической полосой и пикселями:
+  // pxPerLogical нужен ИСКЛЮЧИТЕЛЬНО рендеру (main.js), симуляция его не
+  // читает нигде, поэтому одна и та же логика боя даёт одну и ту же игру
+  // на любом соотношении сторон (ТЗ №07, диагноз, п.1).
   function computeLayout(cssW, cssH, geometry) {
     var unitSize = cssH * geometry.unit_height_screen_fraction;
     var baseWidth = unitSize * 0.55;
@@ -41,36 +69,51 @@
       laneY: cssH / 2,
       playerBase: { x: margin, y: 0, w: baseWidth, h: baseHeight, frontX: margin + baseWidth },
       enemyBase: { x: 0, y: 0, w: baseWidth, h: baseHeight, frontX: cssW - margin - baseWidth },
-      playerReinforceX: 0, enemyReinforceX: 0, reinforceOffsetPx: 0
+      laneLengthLogical: geometry.lane_length_logical,
+      reinforceOffsetLogical: geometry.reinforce_offset_logical
     };
     layout.playerBase.y = layout.laneY - baseHeight / 2;
     layout.enemyBase.x = cssW - margin - baseWidth;
     layout.enemyBase.y = layout.laneY - baseHeight / 2;
 
-    // Дистанция подкрепления (ТЗ №06, блок 1): точка появления купленного
-    // юнита отодвинута от двери базы на reinforce_offset_uw, но не более
-    // 20% длины полосы — на узких/квадратных экранах офсет в uw не должен
-    // съедать почти всю полосу.
     var laneLengthPx = layout.enemyBase.frontX - layout.playerBase.frontX;
-    var reinforceOffsetPx = Math.min(
-      geometry.reinforce_offset_uw * unitSize,
-      laneLengthPx * 0.2
-    );
-    layout.reinforceOffsetPx = reinforceOffsetPx;
-    layout.playerReinforceX = layout.playerBase.frontX + reinforceOffsetPx;
-    layout.enemyReinforceX = layout.enemyBase.frontX - reinforceOffsetPx;
+    layout.laneLengthPx = laneLengthPx;
+    layout.pxPerLogical = laneLengthPx / geometry.lane_length_logical;
+
+    // Точка подкрепления — только для отрисовки опорной линии (main.js);
+    // сама механика подкрепления читает reinforceOffsetLogical напрямую.
+    layout.playerReinforceX = layout.playerBase.frontX + layout.reinforceOffsetLogical * layout.pxPerLogical;
+    layout.enemyReinforceX = layout.enemyBase.frontX - layout.reinforceOffsetLogical * layout.pxPerLogical;
     return layout;
+  }
+
+  // Логическая координата юнита -> пиксель экрана. Единственное место,
+  // где логическая полоса "ложится" в пиксели (ТЗ №07, блок 1) — вызывается
+  // только рендером, симуляция об этой функции не знает.
+  function logicalToPx(layout, logicalX) {
+    return layout.playerBase.frontX + logicalX * layout.pxPerLogical;
   }
 
   // ---------------- battle ----------------
 
-  function createEngine(balance, layout, hooks) {
+  function createEngine(balance, layout, hooks, options) {
     hooks = hooks || {};
+    options = options || {};
     var onDamage = hooks.onDamage || function () {};
     var onKill = hooks.onKill || function () {};
     var onBaseHit = hooks.onBaseHit || function () {};
     var onBaseDestroyed = hooks.onBaseDestroyed || function () {};
     var onRangedShot = hooks.onRangedShot || function () {};
+
+    var LANE = balance.geometry.lane_length_logical;
+    var deterministic = !!options.deterministic;
+    var seed = options.seed || 1;
+    var rng = deterministic ? null : createRng(seed);
+    // Допуск "равноценности" цели (ТЗ №07, блок 2, дефолт #4): цели в пределах
+    // одного шага очереди друг от друга не различимы по дистанции для решения
+    // игрока/врага — выбор между ними даёт джиттер. Без rng (deterministic)
+    // всегда побеждает первая найденная по индексу пула — старое поведение.
+    var tieEpsilonLogical = balance.geometry.queue_gap_logical || 0;
 
     var playerUnits = makePool(POOL_SIZE);
     var enemyUnits = makePool(POOL_SIZE);
@@ -99,7 +142,22 @@
       };
     }
 
-    function restart() {
+    // Джиттер интервала решений вражеского ИИ (ТЗ №07, блок 2, дефолт #4):
+    // ±10% на время КАЖДОЙ волны расписания, посчитано один раз на бой из
+    // сида партии. Не трогает состав/счётчик волны (тип, count) и не
+    // трогает экономику/урон (дефолт #4) — только момент решения "напасть".
+    var jitteredWaveTimes = [];
+    function buildJitteredWaveTimes() {
+      var sched = balance.enemy.schedule;
+      jitteredWaveTimes = new Array(sched.length);
+      for (var i = 0; i < sched.length; i++) {
+        jitteredWaveTimes[i] = rng ? sched[i].time * (1 + (rng() * 0.2 - 0.1)) : sched[i].time;
+      }
+    }
+
+    function restart(newSeed) {
+      if (newSeed !== undefined && !deterministic) rng = createRng(newSeed);
+      buildJitteredWaveTimes();
       for (var i = 0; i < playerUnits.length; i++) playerUnits[i].active = false;
       for (var j = 0; j < enemyUnits.length; j++) enemyUnits[j].active = false;
       state = freshState();
@@ -111,12 +169,12 @@
       state.minPlayerBaseHp = state.playerBaseHp;
       state.minEnemyBaseHp = state.enemyBaseHp;
       var sched = balance.enemy.schedule;
-      state.nextEndlessTime = (sched.length ? sched[sched.length - 1].time : 0) +
+      state.nextEndlessTime = (sched.length ? jitteredWaveTimes[sched.length - 1] : 0) +
         (balance.enemy.endless ? balance.enemy.endless.interval_start_s : 0);
       state.endlessWaveIndex = 0;
       if (sched.length) {
         state.nextWaveType = sched[0].type;
-        state.nextWaveTime = sched[0].time;
+        state.nextWaveTime = jitteredWaveTimes[0];
         state.nextWaveCount = sched[0].count;
       }
     }
@@ -157,16 +215,16 @@
       var slot = findFreeSlot(pool);
       if (!slot) return null;
 
-      var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
+      var gap = balance.geometry.queue_gap_logical;
       var x;
       if (isPlayer) {
-        x = layout.playerReinforceX;
+        x = layout.reinforceOffsetLogical;
         var minX = minActiveX(playerUnits);
-        if (minX !== null && minX - x < gapPx) x = minX - gapPx;
+        if (minX !== null && minX - x < gap) x = minX - gap;
       } else {
-        x = layout.enemyReinforceX;
+        x = LANE - layout.reinforceOffsetLogical;
         var maxX = maxActiveX(enemyUnits);
-        if (maxX !== null && x - maxX < gapPx) x = maxX + gapPx;
+        if (maxX !== null && x - maxX < gap) x = maxX + gap;
       }
 
       slot.active = true;
@@ -199,7 +257,7 @@
 
     function processSchedule() {
       var sched = balance.enemy.schedule;
-      while (state.scheduleIndex < sched.length && sched[state.scheduleIndex].time <= state.timeElapsed) {
+      while (state.scheduleIndex < sched.length && jitteredWaveTimes[state.scheduleIndex] <= state.timeElapsed) {
         var wave = sched[state.scheduleIndex];
         for (var i = 0; i < wave.count; i++) spawnUnit(false, wave.type);
         state.scheduleIndex++;
@@ -217,7 +275,7 @@
       var sched = balance.enemy.schedule;
       var endless = balance.enemy.endless;
       if (!endless) return;
-      var lastTime = sched.length ? sched[sched.length - 1].time : 0;
+      var lastTime = sched.length ? jitteredWaveTimes[sched.length - 1] : 0;
       if (state.nextEndlessTime < lastTime) state.nextEndlessTime = lastTime + endless.interval_start_s;
 
       while (state.nextEndlessTime <= state.timeElapsed) {
@@ -241,7 +299,7 @@
       var sched = balance.enemy.schedule;
       if (state.scheduleIndex < sched.length) {
         state.nextWaveType = sched[state.scheduleIndex].type;
-        state.nextWaveTime = sched[state.scheduleIndex].time;
+        state.nextWaveTime = jitteredWaveTimes[state.scheduleIndex];
         state.nextWaveCount = sched[state.scheduleIndex].count;
         return;
       }
@@ -265,26 +323,43 @@
       return n;
     }
 
-    function nearestEnemy(unit, otherPool) {
-      var best = null, bestDist = Infinity;
-      for (var i = 0; i < otherPool.length; i++) {
-        var o = otherPool[i];
+    // Общий выбор ближайшей цели с джиттером равноценных (ТЗ №07, блок 2):
+    // сначала находим лучшую дистанцию, затем среди всех целей в пределах
+    // tieEpsilonLogical от неё выбираем случайно (детерминированно — первую
+    // по порядку пула, как раньше). maxDist === null — без ограничения
+    // дальности (nearestEnemy), число — с ограничением (nearestToPoint).
+    function pickNearestWithTie(pool, originX, maxDist) {
+      var bestDist = Infinity;
+      var i, o, d;
+      for (i = 0; i < pool.length; i++) {
+        o = pool[i];
         if (!o.active) continue;
-        var d = Math.abs(o.x - unit.x);
-        if (d < bestDist) { bestDist = d; best = o; }
+        d = Math.abs(o.x - originX);
+        if (maxDist !== null && d > maxDist) continue;
+        if (d < bestDist) bestDist = d;
       }
-      return best ? { unit: best, dist: bestDist } : null;
+      if (bestDist === Infinity) return null;
+      var candidates = [];
+      for (i = 0; i < pool.length; i++) {
+        o = pool[i];
+        if (!o.active) continue;
+        d = Math.abs(o.x - originX);
+        if (maxDist !== null && d > maxDist) continue;
+        if (d <= bestDist + tieEpsilonLogical) candidates.push({ unit: o, dist: d });
+      }
+      if (!rng || candidates.length === 1) return candidates[0];
+      var idx = Math.floor(rng() * candidates.length);
+      if (idx >= candidates.length) idx = candidates.length - 1;
+      return candidates[idx];
     }
 
-    function nearestToPoint(pool, originX, rangePx) {
-      var best = null, bestDist = Infinity;
-      for (var i = 0; i < pool.length; i++) {
-        var o = pool[i];
-        if (!o.active) continue;
-        var d = Math.abs(o.x - originX);
-        if (d <= rangePx && d < bestDist) { bestDist = d; best = o; }
-      }
-      return best;
+    function nearestEnemy(unit, otherPool) {
+      return pickNearestWithTie(otherPool, unit.x, null);
+    }
+
+    function nearestToPoint(pool, originX, range) {
+      var r = pickNearestWithTie(pool, originX, range);
+      return r ? r.unit : null;
     }
 
     function applyDamage(target, amount, isPlayerAttacking) {
@@ -321,18 +396,17 @@
 
     function simulateSide(pool, order, isPlayer, dt) {
       var n = buildOrder(pool, order, isPlayer);
-      var siegeRangePx = balance.geometry.siege_range_uw * layout.unitSize;
-      var gapPx = balance.geometry.queue_gap_uw * layout.unitSize;
+      var siegeRange = balance.geometry.siege_range_logical;
+      var gap = balance.geometry.queue_gap_logical;
       // Ширина фронта (ТЗ №05, 1.1): радиус ближней атаки расширен так, чтобы
       // до front_depth юнитов очереди одновременно доставали до контакта —
       // юнит позади не блокируется союзником впереди, очередь остаётся только
       // визуальной (шаг ниже по-прежнему держит gap).
-      var contactRangePx = balance.geometry.attack_range_uw * layout.unitSize;
-      var meleeRangePx = (balance.geometry.attack_range_uw +
-        (balance.geometry.front_depth - 1) * balance.geometry.queue_gap_uw) * layout.unitSize;
+      var contactRange = balance.geometry.attack_range_logical;
+      var meleeRange = balance.geometry.attack_range_logical +
+        (balance.geometry.front_depth - 1) * balance.geometry.queue_gap_logical;
       var otherPool = isPlayer ? enemyUnits : playerUnits;
       var dir = isPlayer ? 1 : -1;
-      var frontEdge = isPlayer ? layout.enemyBase.frontX : layout.playerBase.frontX;
 
       for (var i = 0; i < n; i++) {
         var u = order[i];
@@ -341,8 +415,8 @@
 
         // Осада — безусловный приоритет: юнит в радиусе осады бьёт по базе,
         // даже если рядом враг (иначе бой у самой базы стопорит осаду навечно).
-        var distToBase = isPlayer ? (frontEdge - u.x) : (u.x - frontEdge);
-        if (distToBase <= siegeRangePx) {
+        var distToBase = isPlayer ? (LANE - u.x) : u.x;
+        if (distToBase <= siegeRange) {
           u.state = 'SIEGE';
           if (u.cooldown <= 0) {
             u.cooldown = spec.attack_speed;
@@ -352,9 +426,9 @@
         }
 
         // Радиус атаки — свой у каждой роли: ближний бой берёт общую
-        // geometry.attack_range_uw, стрелок — собственный unit.range_uw.
+        // geometry.attack_range_logical, стрелок — собственный unit.range_logical.
         var isRanged = spec.attack_mode === 'ranged';
-        var ownRangePx = isRanged ? spec.range_uw * layout.unitSize : meleeRangePx;
+        var ownRange = isRanged ? spec.range_logical : meleeRange;
         var found = nearestEnemy(u, otherPool);
         var ahead = i > 0 ? order[i - 1] : null;
         // Дистанция подкрепления (ТЗ №06, блок 1): юнит идёт к БЛИЖАЙШЕМУ
@@ -365,7 +439,13 @@
         // смысл только в этом случае — иначе он привязывает юнита к соседу,
         // идущему в другую сторону, и клинит движение.
         var moveDir = found ? (Math.sign(found.unit.x - u.x) || dir) : dir;
-        if (found && found.dist <= ownRangePx) {
+
+        // Слабость стрелка вблизи (ТЗ №07, блок 3, дефолт #7-8): ближе
+        // min_range_fraction от своей дальности стрелок не стреляет и не
+        // наносит урон, но и не убегает — остаётся на месте и терпит.
+        var tooClose = isRanged && found && found.dist < ownRange * spec.min_range_fraction;
+
+        if (found && found.dist <= ownRange && !tooClose) {
           u.state = 'ATTACK';
           if (u.cooldown <= 0) {
             u.cooldown = spec.attack_speed;
@@ -374,59 +454,64 @@
           }
           // Задние ряды бьют с расширенного радиуса, но продолжают идти к
           // истинной дистанции контакта, пока не дойдут — иначе фронт
-          // замирает на границе meleeRangePx и никогда не сжимается
+          // замирает на границе meleeRange и никогда не сжимается
           // (перманентный пат). Стрелка это не касается: его логика
           // "остановился в своей дистанции — дальше не идёт" не трогается.
-          if (!isRanged && found.dist > contactRangePx) {
-            var advancePx = spec.speed_uw * layout.unitSize;
-            var ax = u.x + moveDir * advancePx * dt;
+          if (!isRanged && found.dist > contactRange) {
+            var advance = spec.speed_logical * dt;
+            var ax = u.x + moveDir * advance;
             if (ahead && moveDir === dir) {
-              if (isPlayer) ax = Math.min(ax, ahead.x - gapPx);
-              else ax = Math.max(ax, ahead.x + gapPx);
+              if (isPlayer) ax = Math.min(ax, ahead.x - gap);
+              else ax = Math.max(ax, ahead.x + gap);
             }
             u.x = ax;
           }
           continue;
         }
 
+        if (tooClose) {
+          u.state = 'HELPLESS';
+          continue;
+        }
+
         u.state = 'MOVE';
-        var speedPx = spec.speed_uw * layout.unitSize;
-        var nx = u.x + moveDir * speedPx * dt;
+        var speed = spec.speed_logical * dt;
+        var nx = u.x + moveDir * speed;
         if (ahead && moveDir === dir) {
-          if (isPlayer) nx = Math.min(nx, ahead.x - gapPx);
-          else nx = Math.max(nx, ahead.x + gapPx);
+          if (isPlayer) nx = Math.min(nx, ahead.x - gap);
+          else nx = Math.max(nx, ahead.x + gap);
         }
         u.x = nx;
       }
     }
 
     // Последний рубеж (ТЗ №06, блок 2): у обеих баз безусловно есть оружие —
-    // залп по ближайшему врагу в радиусе base_defense.range_uw, перезарядка
-    // base_defense.cooldown. Своё HP у оружия нет, дружественного огня нет,
-    // цель — один враг, урон не делится. Симметрично, флага отключения нет
-    // (дефолт #8) — асимметрия испортила бы замер.
+    // залп по ближайшему врагу в радиусе base_defense.range_logical,
+    // перезарядка base_defense.cooldown. Своё HP у оружия нет, дружественного
+    // огня нет, цель — один враг, урон не делится. Симметрично, флага
+    // отключения нет (дефолт #8 ТЗ06) — асимметрия испортила бы замер.
     function stepBaseDefense(dt) {
       var bd = balance.base_defense;
       if (!bd) return;
-      var rangePx = bd.range_uw * layout.unitSize;
+      var range = bd.range_logical;
 
       if (state.playerBaseDefCooldown > 0) state.playerBaseDefCooldown -= dt;
       if (state.playerBaseDefCooldown <= 0 && !state.over) {
-        var enemyTarget = nearestToPoint(enemyUnits, layout.playerBase.frontX, rangePx);
+        var enemyTarget = nearestToPoint(enemyUnits, 0, range);
         if (enemyTarget) {
           state.playerBaseDefCooldown = bd.cooldown;
           applyDamage(enemyTarget, bd.damage, true);
-          onRangedShot(layout.playerBase.frontX, layout.laneY, enemyTarget.x, enemyTarget.y);
+          onRangedShot(0, layout.laneY, enemyTarget.x, enemyTarget.y);
         }
       }
 
       if (state.enemyBaseDefCooldown > 0) state.enemyBaseDefCooldown -= dt;
       if (state.enemyBaseDefCooldown <= 0 && !state.over) {
-        var playerTarget = nearestToPoint(playerUnits, layout.enemyBase.frontX, rangePx);
+        var playerTarget = nearestToPoint(playerUnits, LANE, range);
         if (playerTarget) {
           state.enemyBaseDefCooldown = bd.cooldown;
           applyDamage(playerTarget, bd.damage, false);
-          onRangedShot(layout.enemyBase.frontX, layout.laneY, playerTarget.x, playerTarget.y);
+          onRangedShot(LANE, layout.laneY, playerTarget.x, playerTarget.y);
         }
       }
     }
@@ -473,9 +558,11 @@
       spawnEnemy: function (type) { return spawnUnit(false, type); },
       getState: function () { return state; },
       getPlayerUnits: function () { return playerUnits; },
-      getEnemyUnits: function () { return enemyUnits; }
+      getEnemyUnits: function () { return enemyUnits; },
+      isDeterministic: function () { return deterministic; },
+      getSeed: function () { return seed; }
     };
   }
 
-  return { createEngine: createEngine, computeLayout: computeLayout };
+  return { createEngine: createEngine, computeLayout: computeLayout, logicalToPx: logicalToPx, createRng: createRng };
 });

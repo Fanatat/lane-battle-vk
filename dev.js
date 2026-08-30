@@ -56,7 +56,12 @@
       '<div><span>Точка подкрепления</span><span id="devReinforceOffset">0</span></div>' +
       '<div><span>Радиус залпа базы</span><span id="devDefenseRange">0</span></div>' +
       '<div><span>Мин.HP базы игрока</span><span id="devMinPlayerHp">0</span></div>' +
-      '<div><span>Мин.HP базы врага</span><span id="devMinEnemyHp">0</span></div>';
+      '<div><span>Мин.HP базы врага</span><span id="devMinEnemyHp">0</span></div>' +
+      '<h2>Геометрия и вариативность (ТЗ №07)</h2>' +
+      '<div><span>Разрешение канваса</span><span id="devResolution">0</span></div>' +
+      '<div><span>Логическая полоса</span><span id="devLaneLogical">0</span></div>' +
+      '<div><span>px на 1 лог.ед.</span><span id="devPxPerLogical">0</span></div>' +
+      '<div><span>Джиттер</span><span id="devJitter">0</span></div>';
     panel.appendChild(statsBox);
 
     var controlsBox = document.createElement('div');
@@ -78,14 +83,12 @@
     controlsBox.appendChild(hint);
     panel.appendChild(controlsBox);
 
-    // Точка подкрепления и радиус залпа зависят от текущего разрешения
-    // (клэмп 20% длины полосы, ТЗ №06 блок 1) — берём из фактического layout,
-    // не пересчитываем по своей формуле, иначе разойдёмся с движком.
-    var layout = window.Game.getLayout();
-    var offsetUw = layout.reinforceOffsetPx / layout.unitSize;
-    document.getElementById('devReinforceOffset').textContent = offsetUw.toFixed(2) + ' uw';
+    // ТЗ №07, блок 1: дистанции — логические (доля lane_length_logical),
+    // не зависят от разрешения — показываем как есть из balance.json, без
+    // пересчёта в px (иначе разойдёмся с движком, который px вообще не читает).
+    document.getElementById('devReinforceOffset').textContent = balance.geometry.reinforce_offset_logical + ' лог.ед.';
     document.getElementById('devDefenseRange').textContent =
-      (balance.base_defense ? balance.base_defense.range_uw + ' uw' : '—');
+      (balance.base_defense ? balance.base_defense.range_logical + ' лог.ед.' : '—');
 
     var slidersBox = document.createElement('div');
     slidersBox.appendChild(sectionTitle('balance.json'));
@@ -271,12 +274,17 @@
       document.getElementById('devFood').textContent = Math.floor(s.food) + ' / ' + s.foodCap;
 
       var layout = window.Game.getLayout();
-      document.getElementById('devReinforceOffset').textContent =
-        (layout.reinforceOffsetPx / layout.unitSize).toFixed(2) + ' uw';
       document.getElementById('devMinPlayerHp').textContent =
         (s.minPlayerBaseHp / s.playerBaseMaxHp * 100).toFixed(1) + '%';
       document.getElementById('devMinEnemyHp').textContent =
         (s.minEnemyBaseHp / s.enemyBaseMaxHp * 100).toFixed(1) + '%';
+
+      document.getElementById('devResolution').textContent = Math.round(layout.w) + '×' + Math.round(layout.h);
+      document.getElementById('devLaneLogical').textContent = '0 — ' + layout.laneLengthLogical;
+      document.getElementById('devPxPerLogical').textContent = layout.pxPerLogical.toFixed(2) + ' px';
+      document.getElementById('devJitter').textContent = window.Game.isDeterministic()
+        ? 'выключен (deterministic), сид ' + window.Game.getSeed()
+        : 'включён, сид ' + window.Game.getSeed();
     }, 150);
   }
 
