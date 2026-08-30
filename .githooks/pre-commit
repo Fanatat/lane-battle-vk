@@ -1,0 +1,26 @@
+#!/bin/sh
+# T-17: предкоммит-хук блокирует коммит при провале юнит-тестов и build.py
+# для каждой активной площадки. tests/sim.js (турнир + T-23 sweep, ~3 мин)
+# и Playwright-приёмка (tests/acceptance_*.py, тоже минуты) НЕ входят сюда
+# намеренно — решение исполнителя (ТЗ №12): гейт КАЖДОГО коммита не должен
+# стоить минуты, это убивает частые коммиты (P-06 "исполнение параллельно
+# и почти бесплатно, узкое место — приёмка"). Полный набор гоняется вручную
+# перед закрытием фазы, как и в этой сессии.
+#
+# Активация (НЕ выполняется автоматически этим хуком/сессией — это
+# git-конфигурация, которую сессия не трогает сама, см. BLOCKERS.md):
+#   git config core.hooksPath .githooks
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-commit] node tests/campaign_sim.js"
+node tests/campaign_sim.js > /tmp/pre-commit-campaign_sim.log 2>&1 || { echo "[FAIL] campaign_sim.js — см. /tmp/pre-commit-campaign_sim.log"; tail -20 /tmp/pre-commit-campaign_sim.log; exit 1; }
+
+echo "[pre-commit] node tests/layout_check.js"
+node tests/layout_check.js > /tmp/pre-commit-layout_check.log 2>&1 || { echo "[FAIL] layout_check.js — см. /tmp/pre-commit-layout_check.log"; tail -20 /tmp/pre-commit-layout_check.log; exit 1; }
+
+echo "[pre-commit] build.py (обе площадки)"
+python3 build.py > /tmp/pre-commit-build.log 2>&1 || { echo "[FAIL] build.py — см. /tmp/pre-commit-build.log"; tail -20 /tmp/pre-commit-build.log; exit 1; }
+
+echo "[pre-commit] OK — campaign_sim/layout_check/build.py зелёные"

@@ -138,6 +138,14 @@
   .upgradeItem button:disabled { background: var(--paper-panel); color: var(--ink-soft); cursor: default; opacity: 0.6; }
 
   #devPanel.hidden { display: none; }
+
+  #buildBadge {
+    position: fixed; left: calc(4px + env(safe-area-inset-left));
+    bottom: calc(4px + env(safe-area-inset-bottom));
+    font-size: 10px; color: var(--ink-soft); opacity: 0.35; pointer-events: none;
+    z-index: 5; font-family: system-ui, sans-serif;
+  }
+  #buildBadge.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -198,6 +206,13 @@
   </div>
 
   <div id="devPanel" class="hidden"></div>
+
+  <!-- ТЗ №12, G-07(3): плашка номера билда — маленькая, неинтерактивная,
+       low-opacity, вне игровых контролов, уважает safe-area. Показывается
+       ТОЛЬКО когда Platform.BUILD реально подставлен build.py (не
+       сырой плейсхолдер платформы) — см. main.js
+       updateBuildBadge(). На локальном запуске без сборки — не видна. -->
+  <div id="buildBadge" class="hidden"></div>
 
   <script src="platform.js"></script>
   <script src="engine.js"></script>

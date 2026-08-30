@@ -1,0 +1,7 @@
+# Собранные архивы (build.py) — генерируются заново из исходников,
+# не хранятся в git (G-04: порт — отдельный билд из общих исходников).
+dist/
+
+# Python bytecode cache (tests/acceptance_build.py импортирует build.py).
+__pycache__/
+*.pyc

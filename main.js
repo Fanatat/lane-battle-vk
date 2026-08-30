@@ -82,6 +82,7 @@
       }
       showMenu();
       Platform.gameReady();
+      updateBuildBadge();
     })
     .catch(function (err) {
       document.body.innerHTML =
@@ -666,6 +667,19 @@
 
   function updateSpeedButton() {
     speedBtnEl.textContent = '×' + battleBalance.speed_levels[speedIndex];
+  }
+
+  // ТЗ №12, G-07(3): плашка видна ТОЛЬКО когда build.py реально подставил
+  // BUILD в СОБРАННУЮ копию (не сырой плейсхолдер платформы,
+  // typeof-гейт — тот же приём, что у эталона game3). ?nobuild=1 прячет
+  // плашку перед промо-скриншотом без обращения к платформе.
+  function updateBuildBadge() {
+    var el = document.getElementById('buildBadge');
+    if (!el) return;
+    if (typeof Platform.BUILD !== 'string' || Platform.BUILD.indexOf('__') === 0) return;
+    if (urlParams.has('nobuild')) return;
+    el.textContent = Platform.BUILD;
+    el.classList.remove('hidden');
   }
 
   function showPopup(result) {
