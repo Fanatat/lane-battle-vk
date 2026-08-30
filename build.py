@@ -42,10 +42,17 @@ GAME_ID = 'lanebattler'
 # файлы. Список НЕ "всё, кроме запрещённого" (белый список, не чёрный) —
 # каждый новый игровой файл нужно явно сюда добавить (то же требование
 # K-15 "ревизия всех экранов при изменении масштаба", применённое к сборке).
-WHITELIST_COMMON = ['index.html', 'engine.js', 'campaign.js', 'main.js', 'balance.json']
+WHITELIST_COMMON = ['index.html', 'engine.js', 'theme_art.js', 'campaign.js', 'main.js', 'balance.json']
 
 YANDEX_PLACEHOLDER = '__YANDEX_BUILD__'
 VK_PLACEHOLDER = '__VK_BUILD__'
+
+# ТЗ №13, блок 4 (R-04, G-04): гейт частоты interstitial живёт ТОЛЬКО в
+# main.js (общий файл) — режим подставляется здесь той же точечной заменой,
+# что и BUILD выше, а не рантайм-флагом. Несобранный исходник (main.js на
+# диске) хранит плейсхолдер как есть — main.js трактует его как ВК-режим
+# (см. комментарий у AD_GATE_MODE) до подстановки.
+AD_GATE_PLACEHOLDER = '__AD_GATE_MODE__'
 
 
 def git_hash():
@@ -133,6 +140,13 @@ def build_yandex():
         fail(f"плейсхолдер '{YANDEX_PLACEHOLDER}' не найден в platform.js — маркер сдвинулся, чинить build.py")
     (build_dir / 'platform.js').write_text(platform_src.replace(YANDEX_PLACEHOLDER, build_id), encoding='utf-8')
 
+    # R-04: на Яндексе своего гейта частоты interstitial нет — платформа
+    # решает сама, main.js обязан вызывать её всегда (см. AD_GATE_MODE).
+    main_src = (build_dir / 'main.js').read_text(encoding='utf-8')
+    if AD_GATE_PLACEHOLDER not in main_src:
+        fail(f"плейсхолдер '{AD_GATE_PLACEHOLDER}' не найден в main.js — маркер сдвинулся, чинить build.py")
+    (build_dir / 'main.js').write_text(main_src.replace(AD_GATE_PLACEHOLDER, 'yandex'), encoding='utf-8')
+
     html = (ROOT / 'index.html').read_text(encoding='utf-8')
     html = write_index_html(html, 'platform.js', 'platform.js', '<script src="/sdk.js"></script>')
     (build_dir / 'index.html').write_text(html, encoding='utf-8')
@@ -140,6 +154,7 @@ def build_yandex():
     check_no_dev_leak(build_dir)
     check_placeholder_replaced(build_dir, YANDEX_PLACEHOLDER)
     check_placeholder_replaced(build_dir, VK_PLACEHOLDER)
+    check_placeholder_replaced(build_dir, AD_GATE_PLACEHOLDER)
 
     # G-12: Яндекс — формат подачи zip. G-07(1): имя <игра>_<площадка>_buildN.zip.
     zip_path = DIST / f'{GAME_ID}_yandex_build{n}.zip'
@@ -173,6 +188,14 @@ def build_vk():
         fail(f"плейсхолдер '{VK_PLACEHOLDER}' не найден в vk_platform.js — маркер сдвинулся, чинить build.py")
     (build_dir / 'vk_platform.js').write_text(platform_src.replace(VK_PLACEHOLDER, build_id), encoding='utf-8')
 
+    # R-04: числа ВК (campaign.ads) — гейт остаётся, явная подстановка
+    # 'vk' вместо того, чтобы полагаться на "неподменённое = ВК" — так
+    # артефакт проверяется по своему тексту (G-18), а не по умолчанию.
+    main_src = (build_dir / 'main.js').read_text(encoding='utf-8')
+    if AD_GATE_PLACEHOLDER not in main_src:
+        fail(f"плейсхолдер '{AD_GATE_PLACEHOLDER}' не найден в main.js — маркер сдвинулся, чинить build.py")
+    (build_dir / 'main.js').write_text(main_src.replace(AD_GATE_PLACEHOLDER, 'vk'), encoding='utf-8')
+
     html = (ROOT / 'index.html').read_text(encoding='utf-8')
     html = write_index_html(html, 'platform.js', 'vk_platform.js', '<script src="vk-bridge.min.js"></script>')
     (build_dir / 'index.html').write_text(html, encoding='utf-8')
@@ -180,6 +203,7 @@ def build_vk():
     check_no_dev_leak(build_dir)
     check_placeholder_replaced(build_dir, YANDEX_PLACEHOLDER)
     check_placeholder_replaced(build_dir, VK_PLACEHOLDER)
+    check_placeholder_replaced(build_dir, AD_GATE_PLACEHOLDER)
 
     # G-12: ВК — папка, zip НЕ производится вовсе.
     print(f'OK: vk build {build_id} -> {build_dir.relative_to(ROOT)}/ (папка, без zip — G-12)')

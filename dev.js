@@ -6,6 +6,27 @@
 (function () {
   'use strict';
 
+  // ТЗ №13, блок 5 (M-11, п.7): режим пересъёмки мобильного промо — канвас
+  // на весь кадр без топбара/карточек, чтобы геймплей занимал ≥70% кадра
+  // (A-04, п.5.1.1.2). Живёт ТОЛЬКО здесь (dev.js), а не в main.js под
+  // URL-флагом — M-11 прямым текстом: «URL-флаг защитой не считается»,
+  // защита здесь — dev.js физически не попадает в собранный архив
+  // (build.py: check_no_dev_leak). Промо снимается ПРОТИВ ИСХОДНИКА до
+  // сборки, что и требуется (кадр без плашки BUILD).
+  var PROMO_STYLE = '' +
+    'body.promoMode #topBar, body.promoMode #cards, body.promoMode #buildBadge { display: none !important; }' +
+    'body.promoMode #game { flex: 1 1 auto; }';
+
+  (function initPromoMode() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('promo') !== '1') return;
+    var styleEl2 = document.createElement('style');
+    styleEl2.textContent = PROMO_STYLE;
+    document.head.appendChild(styleEl2);
+    document.body.classList.add('promoMode');
+    window.dispatchEvent(new Event('resize'));
+  })();
+
   var STYLE = '' +
     '#devPanel{position:fixed;top:0;right:0;bottom:0;width:320px;max-width:88vw;' +
     'background:rgba(16,18,24,0.96);color:#eee;font:12px/1.4 system-ui,sans-serif;' +

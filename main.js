@@ -61,6 +61,7 @@
       baseBalance = data;
       resize();
       wireInput();
+      drawStaticIcons();
       window.addEventListener('resize', resize);
       window.addEventListener('orientationchange', resize);
       requestAnimationFrame(loop);
@@ -339,16 +340,13 @@
     }
     ctx.translate(shakeX, shakeY);
 
-    // lane ground line
-    ctx.strokeStyle = '#8a7150';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, layout.laneY + layout.unitSize * 0.7);
-    ctx.lineTo(layout.w, layout.laneY + layout.unitSize * 0.7);
-    ctx.stroke();
+    // ТЗ №13, блок 1: полоса земли с фактурой вместо отладочной линии.
+    var groundY = layout.laneY + layout.unitSize * 0.48;
+    var groundH = layout.unitSize * 0.35;
+    window.ThemeArt.drawGroundBand(ctx, layout.w, groundY, groundH, '#e3d3a8', 'rgba(139,113,74,0.35)');
 
-    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, 'ИГРОК', 'left');
-    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, 'ВРАГ', 'right');
+    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, 'ИГРОК', 'left', true);
+    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, 'ВРАГ', 'right', false);
     drawLastStand();
     drawWavePreview(state);
 
@@ -360,16 +358,26 @@
     ctx.restore();
   }
 
-  function drawBase(base, hp, maxHp, side, label, numberAlign) {
+  // ТЗ №13, блок 1: муравейник/термитник вместо голого прямоугольника
+  // (window.ThemeArt.drawBaseMound) — прямоугольник остаётся хит-боксом
+  // геометрии (не трогаем layout), сверху рисуется силуэт холма.
+  // Подпись стороны — ThemeArt.drawClampedLabel: измеряет реальную ширину
+  // текста и клэмпит X внутрь канваса, дефект обрезки края (ТЗ №01) чинится
+  // измерением, а не подгонкой отступа на глаз.
+  function drawBase(base, hp, maxHp, side, label, numberAlign, isPlayer) {
+    // Столб-основание (как раньше, ТЗ №01-12) держит контраст подписи —
+    // курган рисуется НАД ним отдельной надстройкой (ThemeArt), не вместо.
     ctx.fillStyle = side.fill;
     ctx.fillRect(base.x, base.y, base.w, base.h);
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(base.x, base.y, base.w, base.h * 0.18);
-    ctx.fillStyle = side.text;
-    ctx.font = 'bold ' + Math.round(layout.unitSize * 0.22) + 'px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, base.x + base.w / 2, base.y + base.h / 2);
+    window.ThemeArt.drawBaseMound(ctx, base, isPlayer, side.fill, 'rgba(0,0,0,0.4)');
+
+    var fontPx = Math.round(layout.unitSize * 0.22);
+    window.ThemeArt.drawClampedLabel(
+      ctx, label, base.x + base.w / 2, base.y + base.h * 0.62, layout.w,
+      'bold ' + fontPx + 'px Georgia, "Times New Roman", serif', side.text, fontPx * 0.4
+    );
 
     drawHpBar(base.x, base.y - layout.unitSize * 0.3, base.w, layout.unitSize * 0.18, hp, maxHp, numberAlign);
   }
@@ -414,15 +422,20 @@
     drawBaseDefenseArc(layout.enemyBase.frontX, battleBalance.sides.enemy, rangePx);
   }
 
+  // ТЗ №13, блок 1: тропа-метка вместо голой отладочной линии — пунктир
+  // читается как след/тропа насекомых, та же палитра стороны (дефолт #9
+  // ТЗ №06, новых цветов не вводим).
   function drawReinforceLine(x, side) {
     var size = layout.unitSize;
     ctx.strokeStyle = side.fill;
     ctx.globalAlpha = 0.5;
     ctx.lineWidth = Math.max(1, size * 0.04);
+    ctx.setLineDash([size * 0.10, size * 0.08]);
     ctx.beginPath();
     ctx.moveTo(x, layout.laneY - size * 0.9);
     ctx.lineTo(x, layout.laneY + size * 0.9);
     ctx.stroke();
+    ctx.setLineDash([]);
     ctx.globalAlpha = 1;
   }
 
@@ -461,17 +474,9 @@
       var ix = startX + i * gap;
       var x = ix - iconSize / 2;
       var y = cy - iconSize / 2;
-      pathUnitShape(spec.shape, x, y, iconSize, iconSize);
-      ctx.fillStyle = side.fill;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-      ctx.lineWidth = Math.max(1, size * 0.03);
-      ctx.stroke();
-      ctx.fillStyle = side.text;
-      ctx.font = 'bold ' + Math.round(size * p.font_scale_icon) + 'px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(state.nextWaveType, ix, y + iconSize / 2 + iconSize * 0.08);
+      // ТЗ №13, блок 2: ни одной буквы-обозначения типа на поле — превью
+      // несёт тип силуэтом (тем же, что и юнит в бою), без надписи.
+      window.ThemeArt.drawUnit(ctx, spec.shape, x, y, iconSize, iconSize, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03));
     }
 
     var secondsLeft = Math.max(0, Math.ceil(state.nextWaveTime - state.timeElapsed));
@@ -480,31 +485,6 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(secondsLeft + 'с', cx, cy + iconSize / 2 + size * 0.08);
-  }
-
-  // Форма — единственный несущий тип-сигнал в отрисовке юнита (плюс буква):
-  // rect = боец, spike = стрелок (остриё — дальний бой), dome = щит (купол — держит фронт).
-  function pathUnitShape(shape, x, y, w, h) {
-    ctx.beginPath();
-    if (shape === 'spike') {
-      var neckY = y + h * 0.32;
-      ctx.moveTo(x, neckY);
-      ctx.lineTo(x + w / 2, y);
-      ctx.lineTo(x + w, neckY);
-      ctx.lineTo(x + w, y + h);
-      ctx.lineTo(x, y + h);
-      ctx.closePath();
-    } else if (shape === 'dome') {
-      var domeH = h * 0.32;
-      ctx.moveTo(x, y + domeH);
-      ctx.quadraticCurveTo(x, y, x + w / 2, y);
-      ctx.quadraticCurveTo(x + w, y, x + w, y + domeH);
-      ctx.lineTo(x + w, y + h);
-      ctx.lineTo(x, y + h);
-      ctx.closePath();
-    } else {
-      ctx.rect(x, y, w, h);
-    }
   }
 
   function drawUnit(u, side) {
@@ -523,27 +503,16 @@
     var groundY = u.y + size / 2; // fixed baseline: unit grows upward from the lane as it squashes
     var y = groundY - h;
 
-    // Заливка кодирует сторону (чья), форма — тип (какой). Обводка — только
-    // для читаемости силуэта на фоне, сама по себе она ничего не сообщает
-    // (тонкий контур на телефоне исчезает первым — вывод приёмки ТЗ №01).
-    pathUnitShape(spec.shape, x, y, w, h);
-    ctx.fillStyle = side.fill;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-    ctx.lineWidth = Math.max(1, size * 0.03);
-    ctx.stroke();
+    // Заливка кодирует сторону (чья), силуэт-насекомое — тип (какой). Ни
+    // одной буквы на поле (ТЗ №13, блок 2) — силуэт из theme_art.js несёт
+    // весь тип-сигнал сам по себе (K-22: формы РАЗНЫЕ у трёх ролей).
+    window.ThemeArt.drawUnit(ctx, spec.shape, x, y, w, h, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03));
 
     if (u.flashT > 0) {
-      pathUnitShape(spec.shape, x, y, w, h);
+      window.ThemeArt.pathUnitSilhouette(ctx, spec.shape, x, y, w, h);
       ctx.fillStyle = 'rgba(255,255,255,' + (u.flashT / (battleBalance.juice.hit_flash_ms / 1000)) + ')';
       ctx.fill();
     }
-
-    ctx.fillStyle = side.text;
-    ctx.font = 'bold ' + Math.round(size * 0.4) + 'px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(u.type, sx, y + h / 2 + h * 0.08);
 
     drawHpBar(sx - w / 2, y - size * 0.16, w, size * 0.1, u.hp, u.maxHp, false);
   }
@@ -571,6 +540,28 @@
     ctx.lineTo(s.toX, s.toY);
     ctx.stroke();
     ctx.globalAlpha = 1;
+  }
+
+  // ---------------- статичные иконки карточек/меню (ТЗ №13, блок 3) ----------------
+  // Рисуются ОДИН РАЗ на загрузке (не каждый кадр — это не игровой канвас):
+  // карточки спавна используют силуэт+заливку своей стороны (игрок),
+  // значки меню — состав ростера тем же кодом отрисовки, что и в бою.
+  function drawStaticIcons() {
+    var side = baseBalance.sides.player;
+    ['A', 'B', 'C'].forEach(function (type) {
+      var spec = baseBalance.units[type];
+      drawIconCanvas(document.querySelector('#card-' + type + ' .unitIcon'), spec.shape, side);
+      drawIconCanvas(document.getElementById('menuIcon' + type), spec.shape, side);
+    });
+  }
+
+  function drawIconCanvas(canvasEl, shape, side) {
+    if (!canvasEl) return;
+    var iw = canvasEl.width, ih = canvasEl.height;
+    var ictx = canvasEl.getContext('2d');
+    ictx.clearRect(0, 0, iw, ih);
+    var pad = iw * 0.12;
+    window.ThemeArt.drawUnit(ictx, shape, pad, pad, iw - pad * 2, ih - pad * 2, side.fill, 'rgba(0,0,0,0.5)', Math.max(1, iw * 0.05));
   }
 
   // ---------------- HUD / DOM ----------------
@@ -649,14 +640,23 @@
     startBattle();
   }
 
-  // ТЗ №11: гейт interstitial МЕЖДУ битвами. R-04 — на Яндексе частотой
-  // управляет платформа (свой гейт не нужен), на ВК частоту/кулдаун задаёт
-  // игра (числа — campaign.ads, решение основателя, см. BLOCKERS.md).
-  // Сборки ещё не разделены билдом (build.py — фаза 12), поэтому гейт
-  // применяется универсально — на Яндекс-сборке потребует правки, когда
-  // адаптеры реально разъедутся по билдам.
+  // ТЗ №13, блок 4 (R-04, G-04): режим гейта подставляется build.py
+  // ТОЧЕЧНОЙ ЗАМЕНОЙ этой строки-плейсхолдера в СОБРАННОЙ копии main.js —
+  // НЕ рантайм-флагом (URL/localStorage и т.п. сюда не годятся, дефолт
+  // #8 ТЗ). На несобранном исходнике (dev-сервер, все текущие тесты)
+  // плейсхолдер не заменён и трактуется как ВК-режим — тот же гейт по
+  // campaign.ads, что был универсальным с ТЗ №11, без изменения поведения
+  // против raw index.html.
+  var AD_GATE_MODE = '__AD_GATE_MODE__';
+
+  // ТЗ №11/13: гейт interstitial МЕЖДУ битвами. R-04 — на Яндексе частотой
+  // управляет платформа САМА, свой гейт не строим (вызываем ВСЕГДА, SDK
+  // решает, показывать ли реально; main.js.wireInput уже игнорирует
+  // wasShown и продолжает игру в любом случае). На ВК частоту/кулдаун
+  // задаёт игра числами campaign.ads (решение основателя, см. BLOCKERS.md).
   var lastInterstitialAtMs = null;
   function shouldShowInterstitial() {
+    if (AD_GATE_MODE === 'yandex') return true;
     var ads = baseBalance.campaign.ads;
     if (campaignState.battleNumber % ads.interstitial_every_n_battles !== 0) return false;
     var now = Platform.now();

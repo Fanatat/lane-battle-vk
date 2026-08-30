@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Прототип боя</title>
+<title>Муравьиная война</title>
 <style>
   /* ТЗ №09→10: стиль «тёплая бумага» (A-01, 01B_ИСПОЛНЕНИЕ.txt, прислан
      основателем в ходе фазы 10) — фон #f3ead6, чернила #2b2723, системный
@@ -70,7 +70,8 @@
     color: var(--ink); cursor: pointer; position: relative; font-weight: 700;
     background: var(--paper-panel-2);
   }
-  .card .letter { font-size: 22px; }
+  .card .unitIcon { width: 40px; height: 40px; display: block; }
+  .card .roleLabel { font-size: 11px; font-weight: 700; opacity: 0.85; margin-top: 2px; }
   .card .cost { font-size: 13px; opacity: 0.85; font-weight: 400; }
   .card.disabled { opacity: 0.45; }
   .card.locked .cost { font-size: 18px; }
@@ -119,8 +120,10 @@
   }
   #dailyBonusBtn.hidden { display: none; }
 
+  #menuTitle { font-size: 30px; margin: 0 0 6px; letter-spacing: 0.5px; }
   #menuSubtitle { font-size: 15px; color: var(--ink-soft); margin: 0 0 24px; }
-  #menuBadges { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; font-size: 26px; }
+  #menuBadges { display: flex; justify-content: center; gap: 14px; margin-bottom: 20px; }
+  #menuBadges canvas { width: 46px; height: 46px; }
 
   #upgradeShop { margin: 0 0 18px; max-height: 40vh; overflow-y: auto; text-align: left; }
   #upgradeShop h2 { font-size: 13px; color: var(--accent); margin: 10px 0 6px; }
@@ -169,18 +172,23 @@
     <canvas id="game"></canvas>
 
     <div id="cards">
-      <div class="card disabled" id="card-A"><div class="letter">A</div><div class="cost">—</div></div>
-      <div class="card disabled" id="card-B"><div class="letter">B</div><div class="cost">—</div></div>
-      <div class="card disabled" id="card-C"><div class="letter">C</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-A"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Боец</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-B"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Стрелок</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-C"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Щит</div><div class="cost">—</div></div>
     </div>
   </div>
 
-  <!-- Рабочее имя в интерфейс не выводится (ROADMAP.md, N-15 — нейминг на
-       фазе 12): заголовка-названия здесь нет намеренно, только силуэты и
-       короткое описание правила. -->
+  <!-- ТЗ №13, N-15: имя игры «Муравьиная война» — решение основателя
+       (тема: муравьи против жуков). Выводится ТОЛЬКО здесь и в <title>
+       (ТЗ, раздел 3, п.5), в бою подписей темы нет. -->
   <div id="menuScreen" class="hidden">
     <div id="menuBox">
-      <div id="menuBadges">⚔️🛡️🏹</div>
+      <h1 id="menuTitle">Муравьиная война</h1>
+      <div id="menuBadges">
+        <canvas id="menuIconA" width="46" height="46"></canvas>
+        <canvas id="menuIconB" width="46" height="46"></canvas>
+        <canvas id="menuIconC" width="46" height="46"></canvas>
+      </div>
       <p id="menuSubtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
       <button id="dailyBonusBtn" class="hidden"></button>
       <button id="playBtn">Играть</button>
@@ -215,6 +223,7 @@
   <div id="buildBadge" class="hidden"></div>
 
   <script src="platform.js"></script>
+  <script src="theme_art.js"></script>
   <script src="engine.js"></script>
   <script src="campaign.js"></script>
   <script src="main.js"></script>
