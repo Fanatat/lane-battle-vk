@@ -15,6 +15,7 @@
   var baseBalance = null; // сырой balance.json, не мутируется
   var battleBalance = null; // ТЗ №08: собран campaign.js под текущую битву (апгрейды + сложность)
   var campaignState = null;
+  var saveGateOpen = false; // ТЗ №10, S-03: закрыт, пока Platform.load() не подтвердится (ok:true)
   var engine = null;
   var speedIndex = 0; // index into balance.speed_levels
   var paused = true; // ТЗ №09: старт на экране меню — движок ещё не создан
@@ -56,15 +57,31 @@
       if (!r.ok) throw new Error('balance.json: HTTP ' + r.status);
       return r.json();
     })
-    .then(function (data) {
+    .then(async function (data) {
       baseBalance = data;
-      campaignState = window.LaneCampaign.freshCampaignState();
       resize();
       wireInput();
       window.addEventListener('resize', resize);
       window.addEventListener('orientationchange', resize);
-      showMenu();
       requestAnimationFrame(loop);
+
+      // ---- ТЗ №10: платформа + сейв (S-01/S-03/S-05) ----
+      // Порядок как у эталона (game3/color_sort main.js boot()): init →
+      // load → гейт записи открывается ТОЛЬКО на ok:true, иначе дефолты
+      // остаются только в памяти и persist() ничего не пишет — иначе
+      // первый же persist() полным объектом стёр бы реальный прогресс
+      // на сбое сети при старте (S-03: сейв пишется всегда целиком).
+      await Platform.init();
+      var loadResult = await Platform.load();
+      if (loadResult.ok) {
+        campaignState = window.LaneCampaign.migrateSave(loadResult.data);
+        saveGateOpen = true;
+      } else {
+        console.error('[save] load() не удался при старте — играем на дефолтах, запись сейва отключена', loadResult.error);
+        campaignState = window.LaneCampaign.freshCampaignState();
+      }
+      showMenu();
+      Platform.gameReady();
     })
     .catch(function (err) {
       document.body.innerHTML =
@@ -152,7 +169,14 @@
   var menuScreenEl = document.getElementById('menuScreen');
   var pauseScreenEl = document.getElementById('pauseScreen');
 
-  function showMenu() { menuScreenEl.classList.remove('hidden'); }
+  // K-26: строка кнопки не обещает того, чего нет — «Играть» подошло бы
+  // только первому запуску; при продолженной кампании (сейв реально
+  // что-то восстановил) кнопка честно говорит «Продолжить».
+  function showMenu() {
+    var playBtnEl = document.getElementById('playBtn');
+    if (playBtnEl) playBtnEl.textContent = campaignState && campaignState.battleNumber > 1 ? 'Продолжить' : 'Играть';
+    menuScreenEl.classList.remove('hidden');
+  }
   function hideMenu() { menuScreenEl.classList.add('hidden'); }
 
   function openPause() {
@@ -164,10 +188,14 @@
     paused = false;
     pauseScreenEl.classList.add('hidden');
   }
+  // K-19: пути, стирающего прогресс, в UI не существует — «Выйти в меню»
+  // НЕ сбрасывает campaignState (иначе кнопка означала бы одновременно
+  // «продолжить» и «стереть»). Прогресс уже сохранён по событиям
+  // (persist() после каждой покупки/битвы, ТЗ №10) — «Играть» из меню
+  // продолжит с того же campaignState.battleNumber.
   function exitToMenu() {
     pauseScreenEl.classList.add('hidden');
     engine = null;
-    campaignState = window.LaneCampaign.freshCampaignState();
     paused = true;
     showMenu();
   }
@@ -572,6 +600,26 @@
     trophyValueEl.textContent = campaignState.trophies;
   }
 
+  // ТЗ №10: запись по событиям (S-04) — вызывается в каждой точке, где
+  // campaignState реально меняется (после битвы, после покупки), а не
+  // таймером. Гейт (S-03) не даёт затереть реальный сейв дефолтами, пока
+  // load() при старте не подтвердился. Сторож объёма (S-06) меряет
+  // РЕАЛЬНЫЕ байты, не полагается на «должно влезать».
+  function persist() {
+    if (!saveGateOpen) {
+      console.warn('[save] запись пропущена — сейв ещё не подтверждён (гейт закрыт)');
+      return;
+    }
+    var payload = window.LaneCampaign.serializeForSave(campaignState);
+    if (typeof Platform.SAVE_SIZE_GUARD_BYTES === 'number') {
+      var sizeBytes = new Blob([JSON.stringify(payload)]).size;
+      if (sizeBytes > Platform.SAVE_SIZE_GUARD_BYTES) {
+        console.error('[save] СЕЙВ ПРЕВЫСИЛ БЮДЖЕТ СТОРОЖА: ' + sizeBytes + ' байт > ' + Platform.SAVE_SIZE_GUARD_BYTES);
+      }
+    }
+    Platform.save(payload);
+  }
+
   function updateSpeedButton() {
     speedBtnEl.textContent = '×' + battleBalance.speed_levels[speedIndex];
   }
@@ -582,6 +630,7 @@
     var gained = window.LaneCampaign.reward(baseBalance, campaignState.battleNumber, won);
     campaignState.trophies += gained;
     updateCampaignHud();
+    persist();
 
     popupTitleEl.textContent = won ? 'Победа' : 'Поражение';
     var seconds = state.timeElapsed.toFixed(1);
@@ -658,6 +707,7 @@
     if (action()) {
       updateCampaignHud();
       buildUpgradeShop();
+      persist();
     }
   }
 
@@ -668,6 +718,7 @@
     };
     restartBtnEl.onclick = function () {
       campaignState.battleNumber++;
+      persist();
       startBattle();
     };
     Object.keys(cardEls).forEach(function (type) {

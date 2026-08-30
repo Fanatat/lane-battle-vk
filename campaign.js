@@ -23,6 +23,54 @@
     };
   }
 
+  // ТЗ №10: S-03 (сейв пишется целиком) + S-05 (номер схемы для миграций).
+  var SAVE_SCHEMA_VERSION = 1;
+
+  function serializeForSave(state) {
+    return {
+      v: SAVE_SCHEMA_VERSION,
+      battleNumber: state.battleNumber,
+      trophies: state.trophies,
+      unlocked: { unlock_B: !!state.unlocked.unlock_B, unlock_C: !!state.unlocked.unlock_C },
+      levels: {
+        income: state.levels.income, base_hp: state.levels.base_hp,
+        damage_A: state.levels.damage_A, damage_B: state.levels.damage_B, damage_C: state.levels.damage_C
+      }
+    };
+  }
+
+  // S-05: функция миграции обязана существовать до первого реального
+  // изменения схемы. v1 — первая версия сейва в этом треке, «старого
+  // формата» в природе ещё нет (кампания жила только в памяти вкладки
+  // до фазы 10) — миграция здесь защищает от ЧАСТИЧНО ПОВРЕЖДЁННЫХ или
+  // укороченных данных (реальная площадка/сеть портит их чаще, чем
+  // кажется), а не переписывает схему с нуля. Версия сейва НОВЕЕ
+  // текущей (билд откатили, G-14) не читается частично — дефолты, не
+  // молчаливое угадывание.
+  function migrateSave(raw) {
+    var fresh = freshCampaignState();
+    if (!raw || typeof raw !== 'object') return fresh;
+    if (typeof raw.v === 'number' && raw.v > SAVE_SCHEMA_VERSION) {
+      console.error('[campaign] сейв версии ' + raw.v + ' новее текущей (' + SAVE_SCHEMA_VERSION + ') — используются дефолты вместо частичного чтения');
+      return fresh;
+    }
+    var out = fresh;
+    if (typeof raw.battleNumber === 'number' && raw.battleNumber >= 1) out.battleNumber = raw.battleNumber;
+    if (typeof raw.trophies === 'number' && raw.trophies >= 0) out.trophies = raw.trophies;
+    if (raw.unlocked && typeof raw.unlocked === 'object') {
+      out.unlocked.unlock_B = !!raw.unlocked.unlock_B;
+      // C без B — невозможное состояние графа разблокировок (ГРАФ_РАЗБЛОКИРОВОК_ТЗ08.md),
+      // не доверяем повреждённому сейву слепо.
+      out.unlocked.unlock_C = !!raw.unlocked.unlock_C && out.unlocked.unlock_B;
+    }
+    if (raw.levels && typeof raw.levels === 'object') {
+      ['income', 'base_hp', 'damage_A', 'damage_B', 'damage_C'].forEach(function (k) {
+        if (typeof raw.levels[k] === 'number' && raw.levels[k] >= 0) out.levels[k] = raw.levels[k];
+      });
+    }
+    return out;
+  }
+
   function upgradeCost(campaign, key, state) {
     var def = campaign.upgrades[key];
     var nextLevel = state.levels[key] + 1;
@@ -100,6 +148,9 @@
 
   return {
     freshCampaignState: freshCampaignState,
+    SAVE_SCHEMA_VERSION: SAVE_SCHEMA_VERSION,
+    serializeForSave: serializeForSave,
+    migrateSave: migrateSave,
     upgradeCost: upgradeCost,
     unlockCost: unlockCost,
     canBuyUnlock: canBuyUnlock,
