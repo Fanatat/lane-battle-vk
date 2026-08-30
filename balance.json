@@ -303,5 +303,31 @@
     "card_shake_ms": 150,
     "ranged_shot_ms": 80,
     "ranged_shot_color": "rgba(255,255,255,0.85)"
+  },
+  "campaign": {
+    "_comment": "ТЗ №08. Трофеи — валюта забега, копится по битвам, не обнуляется между битвами в рамках сессии (сейв — фаза 10). Сложность растёт ТОЛЬКО через частоту волн (schedule_time_mult) — не через характеристики врага: balance.units общий для игрока и врага (см. ГРАФ_РАЗБЛОКИРОВОК_ТЗ08.md, BLOCKERS.md п.12-13). Стоимость апгрейда уровня N = cost_base × N.",
+    "currency_name": "трофеи",
+    "currency_icon": "🏆",
+    "reward": {
+      "win_base": 12,
+      "win_per_battle_step": 1.5,
+      "lose_base": 4,
+      "lose_per_battle_step": 0.5
+    },
+    "difficulty": {
+      "schedule_time_mult_per_battle": 0.955,
+      "schedule_time_floor": 0.5
+    },
+    "unlocks": {
+      "unlock_B": { "label": "Открыть стрелка (B)", "cost": 10, "requires": null },
+      "unlock_C": { "label": "Открыть щит (C)", "cost": 20, "requires": "unlock_B" }
+    },
+    "upgrades": {
+      "income": { "label": "Доход еды", "cost_base": 8, "step": 0.3, "max_level": 10, "requires": null },
+      "base_hp": { "label": "HP базы", "cost_base": 6, "step": 30, "max_level": 10, "requires": null },
+      "damage_A": { "label": "Урон бойца A", "cost_base": 6, "step": 1, "max_level": 10, "requires": null },
+      "damage_B": { "label": "Урон стрелка B", "cost_base": 8, "step": 2, "max_level": 10, "requires": "unlock_B" },
+      "damage_C": { "label": "Урон щита C", "cost_base": 10, "step": 1, "max_level": 10, "requires": "unlock_C" }
+    }
   }
 }

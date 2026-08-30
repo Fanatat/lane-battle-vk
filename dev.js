@@ -61,7 +61,12 @@
       '<div><span>Разрешение канваса</span><span id="devResolution">0</span></div>' +
       '<div><span>Логическая полоса</span><span id="devLaneLogical">0</span></div>' +
       '<div><span>px на 1 лог.ед.</span><span id="devPxPerLogical">0</span></div>' +
-      '<div><span>Джиттер</span><span id="devJitter">0</span></div>';
+      '<div><span>Джиттер</span><span id="devJitter">0</span></div>' +
+      '<h2>Кампания (ТЗ №08)</h2>' +
+      '<div><span>Битва</span><span id="devBattle">0</span></div>' +
+      '<div><span>Трофеи</span><span id="devTrophies">0</span></div>' +
+      '<div><span>B / C открыты</span><span id="devUnlocks">0</span></div>' +
+      '<div><span>Уровни апгрейдов</span><span id="devLevels">0</span></div>';
     panel.appendChild(statsBox);
 
     var controlsBox = document.createElement('div');
@@ -70,6 +75,12 @@
     restartBtn.textContent = 'Рестарт боя';
     restartBtn.onclick = function () { window.Game.restart(); };
     controlsBox.appendChild(restartBtn);
+
+    var resetCampaignBtn = document.createElement('button');
+    resetCampaignBtn.className = 'secondary';
+    resetCampaignBtn.textContent = 'Сбросить кампанию (битва 1)';
+    resetCampaignBtn.onclick = function () { window.Game.resetCampaign(); };
+    controlsBox.appendChild(resetCampaignBtn);
 
     var copyBtn = document.createElement('button');
     copyBtn.className = 'secondary';
@@ -285,6 +296,15 @@
       document.getElementById('devJitter').textContent = window.Game.isDeterministic()
         ? 'выключен (deterministic), сид ' + window.Game.getSeed()
         : 'включён, сид ' + window.Game.getSeed();
+
+      var cs = window.Game.getCampaignState();
+      document.getElementById('devBattle').textContent = cs.battleNumber;
+      document.getElementById('devTrophies').textContent = cs.trophies;
+      document.getElementById('devUnlocks').textContent =
+        (cs.unlocked.unlock_B ? 'да' : 'нет') + ' / ' + (cs.unlocked.unlock_C ? 'да' : 'нет');
+      document.getElementById('devLevels').textContent = Object.keys(cs.levels).map(function (k) {
+        return k + '=' + cs.levels[k];
+      }).join(', ');
     }, 150);
   }
 

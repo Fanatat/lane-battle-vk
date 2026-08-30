@@ -209,9 +209,25 @@
       return max;
     }
 
+    // ТЗ №08: апгрейды кампании усиливают ТОЛЬКО юнитов игрока — balance.units
+    // общий для обеих сторон (движок не различает игрока/врага при чтении
+    // характеристик), поэтому прямая правка balance.units.X.damage усилила бы
+    // и врага. player_unit_overrides — необязательный аддитивный бонус,
+    // читается только при isPlayer===true; без него (обычный бой ТЗ №01-07)
+    // поведение побитово прежнее.
+    function getUnitStats(type, isPlayer) {
+      var spec = balance.units[type];
+      var overrides = isPlayer && balance.player_unit_overrides ? balance.player_unit_overrides[type] : null;
+      return {
+        hp: spec.hp + (overrides && overrides.hp_bonus ? overrides.hp_bonus : 0),
+        damage: spec.damage + (overrides && overrides.damage_bonus ? overrides.damage_bonus : 0)
+      };
+    }
+
     function spawnUnit(isPlayer, type) {
       var pool = isPlayer ? playerUnits : enemyUnits;
       var spec = balance.units[type];
+      var uStats = getUnitStats(type, isPlayer);
       var slot = findFreeSlot(pool);
       if (!slot) return null;
 
@@ -231,8 +247,8 @@
       slot.type = type;
       slot.x = x;
       slot.y = layout.laneY;
-      slot.hp = spec.hp;
-      slot.maxHp = spec.hp;
+      slot.hp = uStats.hp;
+      slot.maxHp = uStats.hp;
       slot.cooldown = 0;
       slot.state = 'MOVE';
       slot.squashT = balance.juice.spawn_squash_ms / 1000;
@@ -248,6 +264,11 @@
 
     function trySpawnFood(type) {
       if (state.over) return false;
+      // ТЗ №08: тип, не открытый в кампании, недоступен для покупки — проверка
+      // в движке, а не только в UI/боте, чтобы конфигурация была надёжна сама
+      // по себе (balance.campaignUnlocked отсутствует вне кампании — ТЗ №01-07
+      // ведут себя как раньше, все типы доступны с самого начала).
+      if (balance.campaignUnlocked && balance.campaignUnlocked[type] === false) return false;
       var cost = balance.units[type].cost;
       if (state.food < cost) return false;
       state.food -= cost;
@@ -411,6 +432,7 @@
       for (var i = 0; i < n; i++) {
         var u = order[i];
         var spec = balance.units[u.type];
+        var uStats = getUnitStats(u.type, isPlayer); // ТЗ №08: аддитивный урон-бонус игрока
         if (u.cooldown > 0) u.cooldown -= dt;
 
         // Осада — безусловный приоритет: юнит в радиусе осады бьёт по базе,
@@ -420,7 +442,7 @@
           u.state = 'SIEGE';
           if (u.cooldown <= 0) {
             u.cooldown = spec.attack_speed;
-            damageBase(!isPlayer, spec.damage);
+            damageBase(!isPlayer, uStats.damage);
           }
           continue;
         }
@@ -449,7 +471,7 @@
           u.state = 'ATTACK';
           if (u.cooldown <= 0) {
             u.cooldown = spec.attack_speed;
-            applyDamage(found.unit, spec.damage, isPlayer);
+            applyDamage(found.unit, uStats.damage, isPlayer);
             if (isRanged) onRangedShot(u.x, u.y, found.unit.x, found.unit.y);
           }
           // Задние ряды бьют с расширенного радиуса, но продолжают идти к

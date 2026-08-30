@@ -19,6 +19,8 @@
     padding: 8px 12px; box-sizing: border-box; color: #eee; font-size: 16px;
     background: #1b1e27;
   }
+  #campaignBar { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+  #trophyBar { display: flex; align-items: center; gap: 4px; }
   #foodBar { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   #foodBar .icon { font-size: 18px; }
   #foodBarTrack {
@@ -46,6 +48,7 @@
   .card .letter { font-size: 22px; }
   .card .cost { font-size: 13px; opacity: 0.85; font-weight: 400; }
   .card.disabled { opacity: 0.45; }
+  .card.locked .cost { font-size: 18px; }
   .card.shake { animation: cardShake var(--shake-ms, 150ms) linear; }
   @keyframes cardShake {
     0% { transform: translateX(0); }
@@ -66,11 +69,26 @@
     text-align: center; min-width: 260px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
   }
   #popupTitle { margin: 0 0 12px; font-size: 28px; }
-  #popupStats { margin: 0 0 20px; font-size: 15px; line-height: 1.6; color: #ccc; white-space: pre-line; }
+  #popupStats { margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #ccc; white-space: pre-line; }
   #restartBtn {
     min-width: 140px; min-height: 44px; border-radius: 10px; border: none;
     background: #5fd15f; color: #06210a; font-weight: 700; font-size: 16px; cursor: pointer;
   }
+
+  #upgradeShop { margin: 0 0 18px; max-height: 40vh; overflow-y: auto; text-align: left; }
+  #upgradeShop h2 { font-size: 13px; color: #3fa7ff; margin: 10px 0 6px; }
+  #upgradeShop h2:first-child { margin-top: 0; }
+  .upgradeItem {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 8px; margin-bottom: 4px; border-radius: 8px; background: #262b36;
+  }
+  .upgradeItem .upgLabel { font-size: 13px; color: #eee; }
+  .upgradeItem .upgLevel { font-size: 11px; color: #999; }
+  .upgradeItem button {
+    flex: 0 0 auto; min-width: 74px; min-height: 32px; border-radius: 8px; border: none;
+    background: #3fa7ff; color: #06121e; font-weight: 700; font-size: 12px; cursor: pointer;
+  }
+  .upgradeItem button:disabled { background: #3a3f4d; color: #777; cursor: default; }
 
   #devPanel.hidden { display: none; }
 </style>
@@ -78,6 +96,10 @@
 <body>
   <div id="root">
     <div id="topBar">
+      <div id="campaignBar">
+        <span id="battleLabel">Битва 1</span>
+        <span id="trophyBar"><span class="icon">🏆</span><span id="trophyValue">0</span></span>
+      </div>
       <div id="foodBar">
         <span class="icon">🍖</span>
         <span id="foodValue">0</span>/<span id="foodCap">0</span>
@@ -99,6 +121,7 @@
     <div id="popupBox">
       <h1 id="popupTitle">—</h1>
       <p id="popupStats"></p>
+      <div id="upgradeShop"></div>
       <button id="restartBtn">Ещё раз</button>
     </div>
   </div>
@@ -106,6 +129,7 @@
   <div id="devPanel" class="hidden"></div>
 
   <script src="engine.js"></script>
+  <script src="campaign.js"></script>
   <script src="main.js"></script>
   <script src="dev.js"></script>
 </body>

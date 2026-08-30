@@ -12,7 +12,9 @@
   var DMG_POOL_SIZE = 96;
   var SHOT_POOL_SIZE = 48;
 
-  var balance = null;
+  var baseBalance = null; // сырой balance.json, не мутируется
+  var battleBalance = null; // ТЗ №08: собран campaign.js под текущую битву (апгрейды + сложность)
+  var campaignState = null;
   var engine = null;
   var speedIndex = 0; // index into balance.speed_levels
   var paused = false;
@@ -55,16 +57,10 @@
       return r.json();
     })
     .then(function (data) {
-      balance = data;
-      engine = window.LaneEngine.createEngine(balance, layout, {
-        onDamage: function (logicalX, y, value) { spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value); },
-        onBaseDestroyed: showPopup,
-        onRangedShot: function (fromX, fromY, toX, toY) {
-          spawnShot(window.LaneEngine.logicalToPx(layout, fromX), fromY, window.LaneEngine.logicalToPx(layout, toX), toY);
-        }
-      }, { seed: rollSeed(), deterministic: deterministic });
+      baseBalance = data;
+      campaignState = window.LaneCampaign.freshCampaignState();
       resize();
-      restartBattle();
+      startBattle();
       wireInput();
       window.addEventListener('resize', resize);
       window.addEventListener('orientationchange', resize);
@@ -90,7 +86,7 @@
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
 
-    var newLayout = window.LaneEngine.computeLayout(cssW, cssH, balance.geometry);
+    var newLayout = window.LaneEngine.computeLayout(cssW, cssH, baseBalance.geometry);
     Object.keys(newLayout).forEach(function (k) { layout[k] = newLayout[k]; });
   }
 
@@ -106,8 +102,8 @@
 
   function spawnDamageNumber(x, y, value) {
     var d = findFreeDmg();
-    d.active = true; d.x = x; d.y = y; d.vy = -balance.juice.damage_number_rise_px / (balance.juice.damage_number_ms / 1000);
-    d.age = 0; d.maxAge = balance.juice.damage_number_ms / 1000; d.value = Math.round(value);
+    d.active = true; d.x = x; d.y = y; d.vy = -battleBalance.juice.damage_number_rise_px / (battleBalance.juice.damage_number_ms / 1000);
+    d.age = 0; d.maxAge = battleBalance.juice.damage_number_ms / 1000; d.value = Math.round(value);
   }
 
   function findFreeShot() {
@@ -120,12 +116,38 @@
   function spawnShot(fromX, fromY, toX, toY) {
     var s = findFreeShot();
     s.active = true; s.fromX = fromX; s.fromY = fromY; s.toX = toX; s.toY = toY;
-    s.age = 0; s.maxAge = balance.juice.ranged_shot_ms / 1000;
+    s.age = 0; s.maxAge = battleBalance.juice.ranged_shot_ms / 1000;
   }
 
-  // ---------------- battle lifecycle ----------------
+  // ---------------- battle lifecycle (ТЗ №08: кампания) ----------------
 
-  function restartBattle() {
+  // Собирает боевой balance под текущий номер битвы (апгрейды кампании +
+  // сложность врага, campaign.js) и создаёт под него НОВЫЙ движок — battleBalance
+  // меняется от битвы к битве (растущая сложность, апгрейды), поэтому движок
+  // пересоздаётся, а не просто рестартуется на месте. Первые три битвы —
+  // без джиттера (закон 1 ROADMAP.md, см. комментарий в tests/campaign_sim.js).
+  function startBattle() {
+    battleBalance = window.LaneCampaign.buildBattleBalance(baseBalance, campaignState, campaignState.battleNumber);
+    for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
+    for (var m = 0; m < shots.length; m++) shots[m].active = false;
+    resize();
+    engine = window.LaneEngine.createEngine(battleBalance, layout, {
+      onDamage: function (logicalX, y, value) { spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value); },
+      onBaseDestroyed: showPopup,
+      onRangedShot: function (fromX, fromY, toX, toY) {
+        spawnShot(window.LaneEngine.logicalToPx(layout, fromX), fromY, window.LaneEngine.logicalToPx(layout, toX), toY);
+      }
+    }, { seed: rollSeed(), deterministic: deterministic || campaignState.battleNumber <= 3 });
+    hidePopup();
+    updateSpeedButton();
+    updateCardLocks();
+    updateCampaignHud();
+    updateHud();
+  }
+
+  // Рестарт ТЕКУЩЕЙ битвы (тот же номер, тот же battleBalance) — дев-панель
+  // и повторная попытка без продвижения кампании.
+  function restartCurrentBattle() {
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
     for (var m = 0; m < shots.length; m++) shots[m].active = false;
     engine.restart(rollSeed());
@@ -143,7 +165,7 @@
   function shakeCard(type) {
     var el = document.getElementById('card-' + type);
     if (!el) return;
-    el.style.setProperty('--shake-ms', balance.juice.card_shake_ms + 'ms');
+    el.style.setProperty('--shake-ms', battleBalance.juice.card_shake_ms + 'ms');
     el.classList.remove('shake');
     // eslint-disable-next-line no-unused-expressions
     void el.offsetWidth; // restart CSS animation
@@ -170,7 +192,7 @@
     // juice timers run in real time so hit-stop still shows flash/shake while sim is frozen
     updateJuiceTimers(realDt);
 
-    var speedMult = balance.speed_levels[speedIndex];
+    var speedMult = battleBalance.speed_levels[speedIndex];
     var simDt = state.hitstopMs > 0 ? 0 : realDt * speedMult;
 
     if (!state.over) {
@@ -247,13 +269,13 @@
     ctx.lineTo(layout.w, layout.laneY + layout.unitSize * 0.7);
     ctx.stroke();
 
-    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, balance.sides.player, 'ИГРОК', 'left');
-    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, balance.sides.enemy, 'ВРАГ', 'right');
+    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, 'ИГРОК', 'left');
+    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, 'ВРАГ', 'right');
     drawLastStand();
     drawWavePreview(state);
 
-    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], balance.sides.player);
-    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], balance.sides.enemy);
+    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], battleBalance.sides.player);
+    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], battleBalance.sides.enemy);
     for (var m = 0; m < shots.length; m++) drawShot(shots[m]);
     for (var k = 0; k < dmgNumbers.length; k++) drawDamageNumber(dmgNumbers[k]);
 
@@ -304,14 +326,14 @@
   // дуга радиуса залпа у каждой базы. Цвет — существующая палитра стороны
   // (дефолт #9), новых цветов не вводим.
   function drawLastStand() {
-    drawReinforceLine(layout.playerReinforceX, balance.sides.player);
-    drawReinforceLine(layout.enemyReinforceX, balance.sides.enemy);
+    drawReinforceLine(layout.playerReinforceX, battleBalance.sides.player);
+    drawReinforceLine(layout.enemyReinforceX, battleBalance.sides.enemy);
 
-    var bd = balance.base_defense;
+    var bd = battleBalance.base_defense;
     if (!bd) return;
     var rangePx = bd.range_logical * layout.pxPerLogical;
-    drawBaseDefenseArc(layout.playerBase.frontX, balance.sides.player, rangePx);
-    drawBaseDefenseArc(layout.enemyBase.frontX, balance.sides.enemy, rangePx);
+    drawBaseDefenseArc(layout.playerBase.frontX, battleBalance.sides.player, rangePx);
+    drawBaseDefenseArc(layout.enemyBase.frontX, battleBalance.sides.enemy, rangePx);
   }
 
   function drawReinforceLine(x, side) {
@@ -341,10 +363,10 @@
   // перекрывать ни базу, ни лейн боя.
   function drawWavePreview(state) {
     if (!state.nextWaveType) return;
-    var p = balance.wave_preview;
+    var p = battleBalance.wave_preview;
     var size = layout.unitSize;
-    var spec = balance.units[state.nextWaveType];
-    var side = balance.sides.enemy;
+    var spec = battleBalance.units[state.nextWaveType];
+    var side = battleBalance.sides.enemy;
     var cy = layout.enemyBase.y - size * p.y_offset_uw;
     var iconSize = size * p.icon_scale;
     var iconCount = state.nextWaveCount >= 2 ? 2 : 1;
@@ -409,12 +431,12 @@
 
   function drawUnit(u, side) {
     if (!u.active) return;
-    var spec = balance.units[u.type];
+    var spec = battleBalance.units[u.type];
     var size = layout.unitSize;
     var squash = 1;
     if (u.squashT > 0) {
-      var t = 1 - (u.squashT / (balance.juice.spawn_squash_ms / 1000));
-      squash = balance.juice.spawn_squash_scale + (1 - balance.juice.spawn_squash_scale) * t;
+      var t = 1 - (u.squashT / (battleBalance.juice.spawn_squash_ms / 1000));
+      squash = battleBalance.juice.spawn_squash_scale + (1 - battleBalance.juice.spawn_squash_scale) * t;
     }
     var sx = window.LaneEngine.logicalToPx(layout, u.x); // ТЗ №07, блок 1: u.x — логическая координата
     var w = size * 0.82;
@@ -435,7 +457,7 @@
 
     if (u.flashT > 0) {
       pathUnitShape(spec.shape, x, y, w, h);
-      ctx.fillStyle = 'rgba(255,255,255,' + (u.flashT / (balance.juice.hit_flash_ms / 1000)) + ')';
+      ctx.fillStyle = 'rgba(255,255,255,' + (u.flashT / (battleBalance.juice.hit_flash_ms / 1000)) + ')';
       ctx.fill();
     }
 
@@ -464,7 +486,7 @@
     if (!s.active) return;
     var t = s.age / s.maxAge;
     ctx.globalAlpha = Math.max(0, 1 - t);
-    ctx.strokeStyle = balance.juice.ranged_shot_color;
+    ctx.strokeStyle = battleBalance.juice.ranged_shot_color;
     ctx.lineWidth = Math.max(1, layout.unitSize * 0.05);
     ctx.beginPath();
     ctx.moveTo(s.fromX, s.fromY);
@@ -484,6 +506,9 @@
   var popupTitleEl = document.getElementById('popupTitle');
   var popupStatsEl = document.getElementById('popupStats');
   var restartBtnEl = document.getElementById('restartBtn');
+  var battleLabelEl = document.getElementById('battleLabel');
+  var trophyValueEl = document.getElementById('trophyValue');
+  var upgradeShopEl = document.getElementById('upgradeShop');
 
   function updateHud() {
     var state = engine.getState();
@@ -492,7 +517,8 @@
     foodBarFillEl.style.width = (state.foodCap > 0 ? (state.food / state.foodCap) * 100 : 0) + '%';
 
     ['A', 'B', 'C'].forEach(function (type) {
-      var cost = balance.units[type].cost;
+      if (!battleBalance.campaignUnlocked[type]) return; // updateCardLocks владеет видом запертой карты
+      var cost = battleBalance.units[type].cost;
       var el = cardEls[type];
       var costEl = el.querySelector('.cost');
       costEl.textContent = cost;
@@ -500,31 +526,122 @@
     });
   }
 
+  // ТЗ №08: карта закрытого в кампании типа выглядит иначе, чем «не хватает
+  // еды» — постоянный замок, не мигающий disabled. Дёргается один раз на
+  // старте битвы (список открытых типов не меняется посреди боя).
+  function updateCardLocks() {
+    ['A', 'B', 'C'].forEach(function (type) {
+      var el = cardEls[type];
+      var costEl = el.querySelector('.cost');
+      var locked = !battleBalance.campaignUnlocked[type];
+      el.classList.toggle('locked', locked);
+      el.classList.toggle('disabled', locked);
+      costEl.textContent = locked ? '🔒' : battleBalance.units[type].cost;
+    });
+  }
+
+  function updateCampaignHud() {
+    battleLabelEl.textContent = 'Битва ' + campaignState.battleNumber;
+    trophyValueEl.textContent = campaignState.trophies;
+  }
+
   function updateSpeedButton() {
-    speedBtnEl.textContent = '×' + balance.speed_levels[speedIndex];
+    speedBtnEl.textContent = '×' + battleBalance.speed_levels[speedIndex];
   }
 
   function showPopup(result) {
     var state = engine.getState();
-    popupTitleEl.textContent = result === 'WIN' ? 'Победа' : 'Поражение';
+    var won = result === 'WIN';
+    var gained = window.LaneCampaign.reward(baseBalance, campaignState.battleNumber, won);
+    campaignState.trophies += gained;
+    updateCampaignHud();
+
+    popupTitleEl.textContent = won ? 'Победа' : 'Поражение';
     var seconds = state.timeElapsed.toFixed(1);
     popupStatsEl.textContent =
+      'Битва ' + campaignState.battleNumber + '\n' +
       'Длительность боя: ' + seconds + ' с\n' +
       'Юнитов заспавнено: ' + state.spawnedCount + '\n' +
-      'Юнитов убито: ' + state.killedCount;
+      'Юнитов убито: ' + state.killedCount + '\n' +
+      'Получено ' + baseBalance.campaign.currency_icon + ' ' + gained + ' (всего ' + campaignState.trophies + ')';
+    buildUpgradeShop();
+    restartBtnEl.textContent = 'Начать битву ' + (campaignState.battleNumber + 1);
     popupEl.classList.remove('hidden');
   }
   function hidePopup() {
     popupEl.classList.add('hidden');
   }
 
+  // Магазин апгрейдов (ТЗ №08, ГРАФ_РАЗБЛОКИРОВОК_ТЗ08.md) — перерисовывается
+  // целиком на каждое открытие попапа и после каждой покупки (onclick, не
+  // addEventListener — CLAUDE.md: на перерисовываемых экранах копятся дубли
+  // при addEventListener).
+  var UNLOCK_KEYS = { unlock_B: true, unlock_C: true };
+  function buildUpgradeShop() {
+    var campaign = baseBalance.campaign;
+    upgradeShopEl.innerHTML = '';
+
+    var unlockHeader = document.createElement('h2');
+    unlockHeader.textContent = 'Разблокировки';
+    upgradeShopEl.appendChild(unlockHeader);
+    Object.keys(campaign.unlocks).forEach(function (key) {
+      if (campaignState.unlocked[key]) return;
+      var def = campaign.unlocks[key];
+      var canBuy = window.LaneCampaign.canBuyUnlock(campaign, key, campaignState);
+      var locked = def.requires && !campaignState.unlocked[def.requires];
+      upgradeShopEl.appendChild(buildShopRow(
+        def.label, locked ? 'нужно: ' + campaign.unlocks[def.requires].label : '',
+        def.cost, canBuy, function () { buyAndRefresh(function () { return window.LaneCampaign.buyUnlock(campaign, key, campaignState); }); }
+      ));
+    });
+
+    var upgHeader = document.createElement('h2');
+    upgHeader.textContent = 'Апгрейды';
+    upgradeShopEl.appendChild(upgHeader);
+    Object.keys(campaign.upgrades).forEach(function (key) {
+      var def = campaign.upgrades[key];
+      var level = campaignState.levels[key];
+      var locked = def.requires && !campaignState.unlocked[def.requires];
+      if (locked) return; // недоступные пока апгрейды не показываем (граф — это последовательность, не витрина)
+      var cost = window.LaneCampaign.upgradeCost(campaign, key, campaignState);
+      var maxed = cost === null;
+      var canBuy = !maxed && window.LaneCampaign.canBuyUpgrade(campaign, key, campaignState);
+      upgradeShopEl.appendChild(buildShopRow(
+        def.label, 'уровень ' + level + (maxed ? ' (макс.)' : ''),
+        maxed ? null : cost, canBuy, function () { buyAndRefresh(function () { return window.LaneCampaign.buyUpgrade(campaign, key, campaignState); }); }
+      ));
+    });
+  }
+
+  function buildShopRow(label, sub, cost, canBuy, onBuy) {
+    var row = document.createElement('div');
+    row.className = 'upgradeItem';
+    var text = document.createElement('div');
+    text.innerHTML = '<div class="upgLabel">' + label + '</div><div class="upgLevel">' + sub + '</div>';
+    row.appendChild(text);
+    var btn = document.createElement('button');
+    btn.textContent = cost === null ? '—' : (baseBalance.campaign.currency_icon + ' ' + cost);
+    btn.disabled = cost === null || !canBuy;
+    btn.onclick = onBuy;
+    row.appendChild(btn);
+    return row;
+  }
+
+  function buyAndRefresh(action) {
+    if (action()) {
+      updateCampaignHud();
+      buildUpgradeShop();
+    }
+  }
+
   function wireInput() {
     speedBtnEl.onclick = function () {
-      speedIndex = (speedIndex + 1) % balance.speed_levels.length;
+      speedIndex = (speedIndex + 1) % battleBalance.speed_levels.length;
       updateSpeedButton();
     };
     restartBtnEl.onclick = function () {
-      restartBattle();
+      campaignState.battleNumber++;
+      startBattle();
     };
     Object.keys(cardEls).forEach(function (type) {
       cardEls[type].onclick = function () { trySpawnFromCard(type); };
@@ -535,10 +652,12 @@
   // ---------------- expose for dev.js ----------------
 
   window.Game = {
-    getBalance: function () { return balance; },
+    getBalance: function () { return battleBalance; },
     getLayout: function () { return layout; },
     getState: function () { return engine.getState(); },
-    restart: function () { restartBattle(); },
+    getCampaignState: function () { return campaignState; },
+    restart: function () { restartCurrentBattle(); },
+    resetCampaign: function () { campaignState = window.LaneCampaign.freshCampaignState(); startBattle(); },
     setPaused: function (p) { paused = p; },
     spawnEnemyDebug: function (type) { engine.spawnEnemy(type); },
     spawnPlayerDebug: function (type) { engine.spawnPlayer(type); },
