@@ -17,7 +17,7 @@
   var campaignState = null;
   var engine = null;
   var speedIndex = 0; // index into balance.speed_levels
-  var paused = false;
+  var paused = true; // ТЗ №09: старт на экране меню — движок ещё не создан
 
   // Джиттер (ТЗ №07, блок 2): по умолчанию каждый бой — новый сид, для
   // воспроизведения бага — ?seed=N или ?deterministic=1 в адресе (дефолт #6).
@@ -60,10 +60,10 @@
       baseBalance = data;
       campaignState = window.LaneCampaign.freshCampaignState();
       resize();
-      startBattle();
       wireInput();
       window.addEventListener('resize', resize);
       window.addEventListener('orientationchange', resize);
+      showMenu();
       requestAnimationFrame(loop);
     })
     .catch(function (err) {
@@ -139,10 +139,37 @@
       }
     }, { seed: rollSeed(), deterministic: deterministic || campaignState.battleNumber <= 3 });
     hidePopup();
+    hideMenu();
+    paused = false;
     updateSpeedButton();
     updateCardLocks();
     updateCampaignHud();
     updateHud();
+  }
+
+  // ---------------- menu / pause (ТЗ №09) ----------------
+
+  var menuScreenEl = document.getElementById('menuScreen');
+  var pauseScreenEl = document.getElementById('pauseScreen');
+
+  function showMenu() { menuScreenEl.classList.remove('hidden'); }
+  function hideMenu() { menuScreenEl.classList.add('hidden'); }
+
+  function openPause() {
+    if (!engine || engine.getState().over) return; // нечего ставить на паузу без боя/после его конца
+    paused = true;
+    pauseScreenEl.classList.remove('hidden');
+  }
+  function closePause() {
+    paused = false;
+    pauseScreenEl.classList.add('hidden');
+  }
+  function exitToMenu() {
+    pauseScreenEl.classList.add('hidden');
+    engine = null;
+    campaignState = window.LaneCampaign.freshCampaignState();
+    paused = true;
+    showMenu();
   }
 
   // Рестарт ТЕКУЩЕЙ битвы (тот же номер, тот же battleBalance) — дев-панель
@@ -262,7 +289,7 @@
     ctx.translate(shakeX, shakeY);
 
     // lane ground line
-    ctx.strokeStyle = '#262b36';
+    ctx.strokeStyle = '#8a7150';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, layout.laneY + layout.unitSize * 0.7);
@@ -300,14 +327,14 @@
   // anchored so the wider "current / max" label never clips off the canvas edge.
   function drawHpBar(x, y, w, h, hp, maxHp, numberAlign) {
     var frac = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
-    ctx.fillStyle = '#1b1e27';
+    ctx.fillStyle = '#3a2c1c';
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = frac > 0.5 ? '#5fd15f' : (frac > 0.2 ? '#e0b23c' : '#e0475a');
+    ctx.fillStyle = frac > 0.5 ? '#6f8f45' : (frac > 0.2 ? '#d9a441' : '#b5482f');
     ctx.fillRect(x, y, w * frac, h);
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.strokeStyle = 'rgba(58,44,28,0.5)';
     ctx.strokeRect(x, y, w, h);
     if (numberAlign) {
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#3a2c1c';
       ctx.font = 'bold ' + Math.round(h * 1.1) + 'px system-ui, sans-serif';
       ctx.textBaseline = 'bottom';
       var text = Math.round(hp) + ' / ' + Math.round(maxHp);
@@ -397,7 +424,7 @@
     }
 
     var secondsLeft = Math.max(0, Math.ceil(state.nextWaveTime - state.timeElapsed));
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#3a2c1c';
     ctx.font = 'bold ' + Math.round(size * p.font_scale_timer) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -474,7 +501,7 @@
     if (!d.active) return;
     var t = d.age / d.maxAge;
     ctx.globalAlpha = Math.max(0, 1 - t);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#b5482f';
     ctx.font = 'bold ' + Math.round(layout.unitSize * 0.26) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -647,6 +674,11 @@
       cardEls[type].onclick = function () { trySpawnFromCard(type); };
       cardEls[type].ontouchend = function (e) { e.preventDefault(); trySpawnFromCard(type); };
     });
+
+    document.getElementById('playBtn').onclick = function () { startBattle(); };
+    document.getElementById('pauseBtn').onclick = function () { openPause(); };
+    document.getElementById('pauseResumeBtn').onclick = function () { closePause(); };
+    document.getElementById('pauseMenuBtn').onclick = function () { exitToMenu(); };
   }
 
   // ---------------- expose for dev.js ----------------
@@ -654,14 +686,14 @@
   window.Game = {
     getBalance: function () { return battleBalance; },
     getLayout: function () { return layout; },
-    getState: function () { return engine.getState(); },
+    getState: function () { return engine ? engine.getState() : null; },
     getCampaignState: function () { return campaignState; },
-    restart: function () { restartCurrentBattle(); },
+    restart: function () { if (engine) restartCurrentBattle(); },
     resetCampaign: function () { campaignState = window.LaneCampaign.freshCampaignState(); startBattle(); },
     setPaused: function (p) { paused = p; },
-    spawnEnemyDebug: function (type) { engine.spawnEnemy(type); },
-    spawnPlayerDebug: function (type) { engine.spawnPlayer(type); },
-    isDeterministic: function () { return engine.isDeterministic(); },
-    getSeed: function () { return engine.getSeed(); }
+    spawnEnemyDebug: function (type) { if (engine) engine.spawnEnemy(type); },
+    spawnPlayerDebug: function (type) { if (engine) engine.spawnPlayer(type); },
+    isDeterministic: function () { return engine ? engine.isDeterministic() : null; },
+    getSeed: function () { return engine ? engine.getSeed() : null; }
   };
 })();

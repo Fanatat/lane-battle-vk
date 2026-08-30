@@ -277,7 +277,7 @@
       if (!visible) return;
       var s = window.Game.getState();
       var devTime = document.getElementById('devTime');
-      if (!devTime) return;
+      if (!devTime || !s) return; // ТЗ №09: на экране меню/после выхода из боя движка ещё/уже нет
       devTime.textContent = s.timeElapsed.toFixed(1) + ' с';
       document.getElementById('devSpawned').textContent = s.spawnedCount;
       document.getElementById('devKilled').textContent = s.killedCount;

@@ -3,47 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Lane Battle — прототип</title>
+<title>Прототип боя</title>
 <style>
+  /* ТЗ №09: стиль «тёплая бумага» (A-01) вместо тёмной заглушки ТЗ №01-08.
+     Точного файла стандарта A-01 в папке нет (см. BLOCKERS.md) — палитра
+     подобрана исполнителем по названию студийного стиля: тёплый пергамент,
+     чернильный текст, терракотовый акцент. */
+  :root {
+    --paper-bg: #f2e6cd;
+    --paper-panel: #e8d8b4;
+    --paper-panel-2: #ded0ab;
+    --ink: #3a2c1c;
+    --ink-soft: #7a6650;
+    --accent: #c1682f;
+    --accent-ink: #2a1608;
+    --success: #6f8f45;
+    --success-ink: #16210a;
+    --border: #b9a179;
+    --shadow: rgba(58,44,28,0.28);
+  }
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
-    background: #14161c; overflow: hidden;
+    background: var(--paper-bg); overflow: hidden;
     touch-action: none; -webkit-user-select: none; user-select: none;
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
   }
   #root { position: fixed; inset: 0; display: flex; flex-direction: column; }
-  #game { display: block; width: 100%; flex: 1 1 auto; min-height: 0; background: #14161c; }
+  #game { display: block; width: 100%; flex: 1 1 auto; min-height: 0; background: var(--paper-bg); }
 
   #topBar {
-    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 12px; box-sizing: border-box; color: #eee; font-size: 16px;
-    background: #1b1e27;
+    flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 6px 14px; padding: 8px 12px; box-sizing: border-box; color: var(--ink); font-size: 16px;
+    background: var(--paper-panel); border-bottom: 1px solid var(--border);
   }
   #campaignBar { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
   #trophyBar { display: flex; align-items: center; gap: 4px; }
   #foodBar { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   #foodBar .icon { font-size: 18px; }
   #foodBarTrack {
-    width: 120px; height: 10px; background: #333846; border-radius: 5px; overflow: hidden;
-    margin-left: 4px;
+    width: 120px; height: 10px; background: var(--paper-panel-2); border-radius: 5px; overflow: hidden;
+    margin-left: 4px; border: 1px solid var(--border);
   }
-  #foodBarFill { height: 100%; width: 0%; background: #e0b23c; transition: width 80ms linear; }
+  #foodBarFill { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
 
-  #speedBtn {
-    flex: 0 0 auto; min-width: 56px; min-height: 40px; border-radius: 10px; border: none;
-    background: #3fa7ff; color: #06121e; font-weight: 700; font-size: 16px; cursor: pointer;
+  #speedBtn, #pauseBtn {
+    flex: 0 0 auto; min-width: 44px; min-height: 40px; border-radius: 10px; border: none;
+    background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 16px; cursor: pointer;
   }
-  #speedBtn:active { filter: brightness(0.85); }
+  #speedBtn:active, #pauseBtn:active { filter: brightness(0.9); }
+  #topBarRight { display: flex; align-items: center; gap: 8px; }
+
+  @media (max-width: 420px) {
+    #topBar { font-size: 13px; padding: 6px 6px; gap: 4px 6px; }
+    #foodBarTrack { width: 56px; }
+    #speedBtn, #pauseBtn { min-width: 42px; min-height: 42px; font-size: 13px; }
+  }
 
   #cards {
     flex: 0 0 auto; display: flex; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-    box-sizing: border-box; background: #1b1e27;
+    box-sizing: border-box; background: var(--paper-panel); border-top: 1px solid var(--border);
   }
   .card {
-    flex: 1 1 0; min-height: 64px; border-radius: 10px; border: 2px solid #3a3f4d;
+    flex: 1 1 0; min-height: 64px; border-radius: 10px; border: 2px solid var(--border);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    color: #fff; cursor: pointer; position: relative; font-weight: 700;
-    background: #262b36;
+    color: var(--ink); cursor: pointer; position: relative; font-weight: 700;
+    background: var(--paper-panel-2);
   }
   .card .letter { font-size: 22px; }
   .card .cost { font-size: 13px; opacity: 0.85; font-weight: 400; }
@@ -59,36 +83,45 @@
     100% { transform: translateX(0); }
   }
 
-  #popup {
+  #popup, #menuScreen, #pauseScreen {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.6); z-index: 20;
+    background: rgba(58,44,28,0.55); z-index: 20;
   }
-  #popup.hidden { display: none; }
-  #popupBox {
-    background: #1b1e27; color: #fff; border-radius: 16px; padding: 28px 32px;
-    text-align: center; min-width: 260px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  #popup.hidden, #menuScreen.hidden, #pauseScreen.hidden { display: none; }
+  #popupBox, #menuBox, #pauseBox {
+    background: var(--paper-bg); color: var(--ink); border-radius: 16px; padding: 28px 32px;
+    text-align: center; min-width: 260px; box-shadow: 0 10px 40px var(--shadow);
+    border: 1px solid var(--border);
   }
-  #popupTitle { margin: 0 0 12px; font-size: 28px; }
-  #popupStats { margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #ccc; white-space: pre-line; }
-  #restartBtn {
-    min-width: 140px; min-height: 44px; border-radius: 10px; border: none;
-    background: #5fd15f; color: #06210a; font-weight: 700; font-size: 16px; cursor: pointer;
+  #popupTitle, #pauseTitle { margin: 0 0 12px; font-size: 28px; }
+  #popupStats { margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: var(--ink-soft); white-space: pre-line; }
+  #restartBtn, #playBtn, #pauseResumeBtn {
+    min-width: 160px; min-height: 48px; border-radius: 10px; border: none;
+    background: var(--success); color: var(--success-ink); font-weight: 700; font-size: 17px; cursor: pointer;
+  }
+  #pauseMenuBtn {
+    min-width: 160px; min-height: 44px; border-radius: 10px; border: 2px solid var(--border);
+    background: transparent; color: var(--ink); font-weight: 700; font-size: 15px; cursor: pointer;
+    margin-top: 10px;
   }
 
+  #menuSubtitle { font-size: 15px; color: var(--ink-soft); margin: 0 0 24px; }
+  #menuBadges { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; font-size: 26px; }
+
   #upgradeShop { margin: 0 0 18px; max-height: 40vh; overflow-y: auto; text-align: left; }
-  #upgradeShop h2 { font-size: 13px; color: #3fa7ff; margin: 10px 0 6px; }
+  #upgradeShop h2 { font-size: 13px; color: var(--accent); margin: 10px 0 6px; }
   #upgradeShop h2:first-child { margin-top: 0; }
   .upgradeItem {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 6px 8px; margin-bottom: 4px; border-radius: 8px; background: #262b36;
+    padding: 6px 8px; margin-bottom: 4px; border-radius: 8px; background: var(--paper-panel-2);
   }
-  .upgradeItem .upgLabel { font-size: 13px; color: #eee; }
-  .upgradeItem .upgLevel { font-size: 11px; color: #999; }
+  .upgradeItem .upgLabel { font-size: 13px; color: var(--ink); }
+  .upgradeItem .upgLevel { font-size: 11px; color: var(--ink-soft); }
   .upgradeItem button {
-    flex: 0 0 auto; min-width: 74px; min-height: 32px; border-radius: 8px; border: none;
-    background: #3fa7ff; color: #06121e; font-weight: 700; font-size: 12px; cursor: pointer;
+    flex: 0 0 auto; min-width: 74px; min-height: 36px; border-radius: 8px; border: none;
+    background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 12px; cursor: pointer;
   }
-  .upgradeItem button:disabled { background: #3a3f4d; color: #777; cursor: default; }
+  .upgradeItem button:disabled { background: var(--paper-panel); color: var(--ink-soft); cursor: default; opacity: 0.6; }
 
   #devPanel.hidden { display: none; }
 </style>
@@ -105,7 +138,10 @@
         <span id="foodValue">0</span>/<span id="foodCap">0</span>
         <div id="foodBarTrack"><div id="foodBarFill"></div></div>
       </div>
-      <button id="speedBtn">×1</button>
+      <div id="topBarRight">
+        <button id="pauseBtn">⏸</button>
+        <button id="speedBtn">×1</button>
+      </div>
     </div>
 
     <canvas id="game"></canvas>
@@ -114,6 +150,25 @@
       <div class="card disabled" id="card-A"><div class="letter">A</div><div class="cost">—</div></div>
       <div class="card disabled" id="card-B"><div class="letter">B</div><div class="cost">—</div></div>
       <div class="card disabled" id="card-C"><div class="letter">C</div><div class="cost">—</div></div>
+    </div>
+  </div>
+
+  <!-- Рабочее имя в интерфейс не выводится (ROADMAP.md, N-15 — нейминг на
+       фазе 12): заголовка-названия здесь нет намеренно, только силуэты и
+       короткое описание правила. -->
+  <div id="menuScreen" class="hidden">
+    <div id="menuBox">
+      <div id="menuBadges">⚔️🛡️🏹</div>
+      <p id="menuSubtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
+      <button id="playBtn">Играть</button>
+    </div>
+  </div>
+
+  <div id="pauseScreen" class="hidden">
+    <div id="pauseBox">
+      <h1 id="pauseTitle">Пауза</h1>
+      <button id="pauseResumeBtn">Продолжить</button>
+      <div><button id="pauseMenuBtn">Выйти в меню</button></div>
     </div>
   </div>
 
