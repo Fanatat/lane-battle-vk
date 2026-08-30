@@ -29,6 +29,27 @@
 
   // ---- layout (recomputed on resize, полностью из LaneEngine.computeLayout) ----
   var layout = {};
+  // ТЗ №15: часы боя для фазы покоя rig (Rig.drawUnit анимация) — читаются
+  // отрисовкой юнита без протаскивания state через каждый вызов.
+  var frameTimeElapsed = 0;
+  // ТЗ №15, блок 5.3: вспышка дуги обороны базы при залпе — таймеры вне
+  // движка (juice, не бой), обнуляются при пересоздании движка в startBattle().
+  var prevBaseDefCooldown = { player: 0, enemy: 0 };
+  var baseDefFlashMs = { player: 0, enemy: 0 };
+
+  // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
+  // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
+  // министично, без дрейфа), замах — от cooldown относительно attack_speed.
+  function unitAnim(u, spec) {
+    if (u.state === 'ATTACK' || u.state === 'SIEGE') {
+      var speed = spec.attack_speed > 0 ? spec.attack_speed : 1;
+      return { mode: 'attack', t: 1 - Math.max(0, Math.min(1, u.cooldown / speed)) };
+    }
+    if (u.state === 'MOVE') {
+      return { mode: 'walk', t: u.x };
+    }
+    return { mode: 'idle', t: frameTimeElapsed };
+  }
 
   function makeDmgPool(size) {
     var arr = new Array(size);
@@ -149,6 +170,8 @@
     battleBalance = window.LaneCampaign.buildBattleBalance(baseBalance, campaignState, campaignState.battleNumber);
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
     for (var m = 0; m < shots.length; m++) shots[m].active = false;
+    prevBaseDefCooldown.player = 0; prevBaseDefCooldown.enemy = 0;
+    baseDefFlashMs.player = 0; baseDefFlashMs.enemy = 0;
     resize();
     engine = window.LaneEngine.createEngine(battleBalance, layout, {
       onDamage: function (logicalX, y, value) { spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value); },
@@ -298,6 +321,16 @@
       state.shakeMs -= realDt * 1000;
       if (state.shakeMs < 0) state.shakeMs = 0;
     }
+    // ТЗ №15, блок 5.3: вспышка дуги обороны при залпе — детект по росту
+    // cooldown'а движка (сбросился на bd.cooldown = только что выстрелил),
+    // без отдельного хука движка (та же цена, что у juice-таймеров выше).
+    var flashMs = battleBalance.juice.base_def_flash_ms;
+    if (state.playerBaseDefCooldown > prevBaseDefCooldown.player) baseDefFlashMs.player = flashMs;
+    if (state.enemyBaseDefCooldown > prevBaseDefCooldown.enemy) baseDefFlashMs.enemy = flashMs;
+    prevBaseDefCooldown.player = state.playerBaseDefCooldown;
+    prevBaseDefCooldown.enemy = state.enemyBaseDefCooldown;
+    if (baseDefFlashMs.player > 0) baseDefFlashMs.player = Math.max(0, baseDefFlashMs.player - realDt * 1000);
+    if (baseDefFlashMs.enemy > 0) baseDefFlashMs.enemy = Math.max(0, baseDefFlashMs.enemy - realDt * 1000);
   }
 
   function tickUnitAnim(u, realDt) {
@@ -323,6 +356,7 @@
 
   function render() {
     var state = engine.getState();
+    frameTimeElapsed = state.timeElapsed;
     var playerUnits = engine.getPlayerUnits();
     var enemyUnits = engine.getEnemyUnits();
     ctx.save();
@@ -343,38 +377,41 @@
     // ТЗ №13, блок 1: полоса земли с фактурой вместо отладочной линии.
     var groundY = layout.laneY + layout.unitSize * 0.48;
     var groundH = layout.unitSize * 0.35;
-    window.ThemeArt.drawGroundBand(ctx, layout.w, groundY, groundH, '#e3d3a8', 'rgba(139,113,74,0.35)');
+    window.Rig.drawGroundBand(ctx, layout.w, groundY, groundH, '#e3d3a8', 'rgba(139,113,74,0.35)');
+    // ТЗ №15, раздел 2, блок 5.4: редкий орнамент верха кадра — светлее
+    // силуэтов, вне зоны HP-баров/подписей баз (те начинаются заметно ниже).
+    window.Rig.drawTopBanner(ctx, layout.w, layout.unitSize * 0.12, layout.unitSize * 0.14, 'rgba(183,164,126,0.6)', '#ddccaa');
 
     drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, 'ИГРОК', 'left', true);
     drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, 'ВРАГ', 'right', false);
     drawLastStand();
     drawWavePreview(state);
 
-    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], battleBalance.sides.player);
-    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], battleBalance.sides.enemy);
+    for (var i = 0; i < playerUnits.length; i++) drawUnit(playerUnits[i], battleBalance.sides.player, true);
+    for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], battleBalance.sides.enemy, false);
     for (var m = 0; m < shots.length; m++) drawShot(shots[m]);
     for (var k = 0; k < dmgNumbers.length; k++) drawDamageNumber(dmgNumbers[k]);
 
     ctx.restore();
   }
 
-  // ТЗ №13, блок 1: муравейник/термитник вместо голого прямоугольника
-  // (window.ThemeArt.drawBaseMound) — прямоугольник остаётся хит-боксом
-  // геометрии (не трогаем layout), сверху рисуется силуэт холма.
-  // Подпись стороны — ThemeArt.drawClampedLabel: измеряет реальную ширину
+  // ТЗ №15, блок 4: башня/частокол вместо прежнего тематического укрепления
+  // (window.Rig.drawBaseStructure) — прямоугольник остаётся хит-боксом
+  // геометрии (не трогаем layout), сверху рисуется силуэт укрепления.
+  // Подпись стороны — Rig.drawClampedLabel: измеряет реальную ширину
   // текста и клэмпит X внутрь канваса, дефект обрезки края (ТЗ №01) чинится
   // измерением, а не подгонкой отступа на глаз.
   function drawBase(base, hp, maxHp, side, label, numberAlign, isPlayer) {
     // Столб-основание (как раньше, ТЗ №01-12) держит контраст подписи —
-    // курган рисуется НАД ним отдельной надстройкой (ThemeArt), не вместо.
+    // укрепление рисуется НАД ним отдельной надстройкой (Rig), не вместо.
     ctx.fillStyle = side.fill;
     ctx.fillRect(base.x, base.y, base.w, base.h);
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(base.x, base.y, base.w, base.h * 0.18);
-    window.ThemeArt.drawBaseMound(ctx, base, isPlayer, side.fill, 'rgba(0,0,0,0.4)');
+    window.Rig.drawBaseStructure(ctx, base, isPlayer, side.fill, 'rgba(0,0,0,0.4)');
 
     var fontPx = Math.round(layout.unitSize * 0.22);
-    window.ThemeArt.drawClampedLabel(
+    window.Rig.drawClampedLabel(
       ctx, label, base.x + base.w / 2, base.y + base.h * 0.62, layout.w,
       'bold ' + fontPx + 'px Georgia, "Times New Roman", serif', side.text, fontPx * 0.4
     );
@@ -407,10 +444,29 @@
     }
   }
 
+  // ТЗ №15, критерий 5: полоса HP юнита — тоньше базовой, со скруглением
+  // и тёмной подложкой (переиспользует ту же палитру, что и drawHpBar).
+  // Ширина/позиция задаются вызывающим кодом по силуэту роли (rig.bodyBarW),
+  // не по слоту юнита.
+  function drawUnitHpBar(x, y, w, h, hp, maxHp) {
+    var frac = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
+    var r = h / 2;
+    ctx.fillStyle = '#3a2c1c';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
+    if (frac > 0) {
+      ctx.fillStyle = frac > 0.5 ? '#6f8f45' : (frac > 0.2 ? '#d9a441' : '#b5482f');
+      ctx.beginPath();
+      ctx.roundRect(x, y, Math.max(h, w * frac), h, r);
+      ctx.fill();
+    }
+  }
+
   // Дистанция подкрепления и последний рубеж (ТЗ №06, блоки 1–2): тонкая
-  // линия на полосе в точке подкрепления каждой стороны, полупрозрачная
-  // дуга радиуса залпа у каждой базы. Цвет — существующая палитра стороны
-  // (дефолт #9), новых цветов не вводим.
+  // линия на полосе в точке подкрепления каждой стороны, локальная дуга
+  // обороны у подножия каждой базы (ТЗ №15, блок 5.3). Цвет — существующая
+  // палитра стороны (дефолт #9), новых цветов не вводим.
   function drawLastStand() {
     drawReinforceLine(layout.playerReinforceX, battleBalance.sides.player);
     drawReinforceLine(layout.enemyReinforceX, battleBalance.sides.enemy);
@@ -418,13 +474,18 @@
     var bd = battleBalance.base_defense;
     if (!bd) return;
     var rangePx = bd.range_logical * layout.pxPerLogical;
-    drawBaseDefenseArc(layout.playerBase.frontX, battleBalance.sides.player, rangePx);
-    drawBaseDefenseArc(layout.enemyBase.frontX, battleBalance.sides.enemy, rangePx);
+    // Раздел 2, блок 5.3 / критерий 7: "вместо окружности через весь экран —
+    // локальная дуга у подножия базы", не пересекает более трети ширины
+    // поля. bd.range_logical — реальная боевая дистанция (не трогаем,
+    // Block 4 п.5), но ИНДИКАТОР дистанции рисуется урезанным радиусом —
+    // отображение приближённое, как превью волны без точных цифр.
+    var visualR = Math.min(rangePx, layout.w * 0.15);
+    drawBaseDefenseArc(layout.playerBase.frontX, battleBalance.sides.player, visualR, 0, baseDefFlashMs.player);
+    drawBaseDefenseArc(layout.enemyBase.frontX, battleBalance.sides.enemy, visualR, Math.PI, baseDefFlashMs.enemy);
   }
 
-  // ТЗ №13, блок 1: тропа-метка вместо голой отладочной линии — пунктир
-  // читается как след/тропа насекомых, та же палитра стороны (дефолт #9
-  // ТЗ №06, новых цветов не вводим).
+  // ТЗ №13, блок 1: пунктирная метка вместо голой отладочной линии, та же
+  // палитра стороны (дефолт #9 ТЗ №06, новых цветов не вводим).
   function drawReinforceLine(x, side) {
     var size = layout.unitSize;
     ctx.strokeStyle = side.fill;
@@ -439,12 +500,18 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawBaseDefenseArc(frontX, side, rangePx) {
+  // facingAngle: 0 = дуга смотрит вправо (игрок), Math.PI = влево (враг) —
+  // сектор ±ARC_HALF вокруг направления вглубь полосы, не полная окружность
+  // (ТЗ №15, блок 5.3). flashMs>0 — вспышка от только что отработавшего
+  // залпа (ярче и толще на затухающую долю flashMs/base_def_flash_ms).
+  var ARC_HALF = 0.95; // рад, ~54° в каждую сторону от направления полосы
+  function drawBaseDefenseArc(frontX, side, rangePx, facingAngle, flashMs) {
+    var flashFrac = battleBalance.juice.base_def_flash_ms > 0 ? flashMs / battleBalance.juice.base_def_flash_ms : 0;
     ctx.strokeStyle = side.fill;
-    ctx.globalAlpha = 0.25;
-    ctx.lineWidth = Math.max(1, layout.unitSize * 0.06);
+    ctx.globalAlpha = 0.22 + flashFrac * 0.45;
+    ctx.lineWidth = Math.max(1, layout.unitSize * (0.06 + flashFrac * 0.05));
     ctx.beginPath();
-    ctx.arc(frontX, layout.laneY, rangePx, 0, Math.PI * 2);
+    ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -475,8 +542,8 @@
       var x = ix - iconSize / 2;
       var y = cy - iconSize / 2;
       // ТЗ №13, блок 2: ни одной буквы-обозначения типа на поле — превью
-      // несёт тип силуэтом (тем же, что и юнит в бою), без надписи.
-      window.ThemeArt.drawUnit(ctx, spec.shape, x, y, iconSize, iconSize, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03));
+      // несёт тип силуэтом (тем же rig, что и юнит в бою), без надписи.
+      window.Rig.drawUnit(ctx, spec.shape, false, x, y, iconSize, iconSize, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03), { mode: 'idle', t: frameTimeElapsed });
     }
 
     var secondsLeft = Math.max(0, Math.ceil(state.nextWaveTime - state.timeElapsed));
@@ -487,7 +554,7 @@
     ctx.fillText(secondsLeft + 'с', cx, cy + iconSize / 2 + size * 0.08);
   }
 
-  function drawUnit(u, side) {
+  function drawUnit(u, side, isPlayer) {
     if (!u.active) return;
     var spec = battleBalance.units[u.type];
     var size = layout.unitSize;
@@ -502,19 +569,27 @@
     var x = sx - w / 2;
     var groundY = u.y + size / 2; // fixed baseline: unit grows upward from the lane as it squashes
     var y = groundY - h;
+    var anim = unitAnim(u, spec);
 
-    // Заливка кодирует сторону (чья), силуэт-насекомое — тип (какой). Ни
-    // одной буквы на поле (ТЗ №13, блок 2) — силуэт из theme_art.js несёт
-    // весь тип-сигнал сам по себе (K-22: формы РАЗНЫЕ у трёх ролей).
-    window.ThemeArt.drawUnit(ctx, spec.shape, x, y, w, h, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03));
+    // Заливка кодирует сторону (чья), rig+пропы — роль (какую). Ни одной
+    // буквы на поле (ТЗ №13, блок 2, перенесено в ТЗ №15) — силуэт из
+    // rig.js несёт весь роль-сигнал сам по себе (габариты+пропы РАЗНЫЕ).
+    var rig = window.Rig.drawUnit(ctx, spec.shape, isPlayer, x, y, w, h, side.fill, 'rgba(0,0,0,0.4)', Math.max(1, size * 0.03), anim);
 
     if (u.flashT > 0) {
-      window.ThemeArt.pathUnitSilhouette(ctx, spec.shape, x, y, w, h);
+      ctx.beginPath();
+      window.Rig.pathUnitFillShapes(ctx, spec.shape, isPlayer, x, y, w, h, anim);
       ctx.fillStyle = 'rgba(255,255,255,' + (u.flashT / (battleBalance.juice.hit_flash_ms / 1000)) + ')';
       ctx.fill();
     }
 
-    drawHpBar(sx - w / 2, y - size * 0.16, w, size * 0.1, u.hp, u.maxHp, false);
+    // ТЗ №15, критерий 5: полоса HP не шире силуэта роли (rig.bodyBarW —
+    // реальная ширина тела по плечам, не декоративный масштаб слота
+    // rig.figW), тоньше прежней, зазор от макушки ≤ высоты полосы, одна
+    // высота внутри стороны.
+    var barH = size * 0.07;
+    var barGap = barH * 0.5; // ≤ высоты полосы (критерий 5)
+    drawUnitHpBar(sx - rig.bodyBarW / 2, rig.propTopY - barGap - barH, rig.bodyBarW, barH, u.hp, u.maxHp);
   }
 
   function drawDamageNumber(d) {
@@ -561,7 +636,7 @@
     var ictx = canvasEl.getContext('2d');
     ictx.clearRect(0, 0, iw, ih);
     var pad = iw * 0.12;
-    window.ThemeArt.drawUnit(ictx, shape, pad, pad, iw - pad * 2, ih - pad * 2, side.fill, 'rgba(0,0,0,0.5)', Math.max(1, iw * 0.05));
+    window.Rig.drawUnit(ictx, shape, true, pad, pad, iw - pad * 2, ih - pad * 2, side.fill, 'rgba(0,0,0,0.5)', Math.max(1, iw * 0.05), { mode: 'idle', t: 0 });
   }
 
   // ---------------- HUD / DOM ----------------

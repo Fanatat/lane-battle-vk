@@ -6,7 +6,7 @@ tests/label_clip_check.py — ТЗ №13, критерий готовности 
 унести подпись «ИГРОК»/«ВРАГ» за край канваса на узких геометриях.
 
 Проверяет НЕ рендер-скриншот, а сам источник истины поведения —
-window.ThemeArt.drawClampedLabel — тем же способом, каким main.js его
+window.Rig.drawClampedLabel — тем же способом, каким main.js его
 вызывает (тот же font/паддинг), на всех геометриях tests/layout_check.js.
 Печатает итоговый прямоугольник текста и требует, чтобы он целиком лежал
 внутри [0, canvasWidth].
@@ -20,7 +20,7 @@ from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-THEME_ART_JS = (ROOT / 'theme_art.js').read_text(encoding='utf-8')
+RIG_JS = (ROOT / 'rig.js').read_text(encoding='utf-8')
 ENGINE_JS = (ROOT / 'engine.js').read_text(encoding='utf-8')
 BALANCE = __import__('json').loads((ROOT / 'balance.json').read_text(encoding='utf-8'))
 
@@ -34,7 +34,7 @@ GEOMETRIES = [
 HARNESS_HTML = """<!doctype html><html><body>
 <canvas id="c" width="10" height="10"></canvas>
 <script>{engine}</script>
-<script>{theme_art}</script>
+<script>{rig}</script>
 </body></html>"""
 
 results = []
@@ -49,7 +49,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.set_content(HARNESS_HTML.format(engine=ENGINE_JS, theme_art=THEME_ART_JS))
+        page.set_content(HARNESS_HTML.format(engine=ENGINE_JS, rig=RIG_JS))
 
         for label_geo, w, h in GEOMETRIES:
             layout = page.evaluate(
@@ -63,7 +63,7 @@ def main():
                     """([label, cx, canvasW, fontPx]) => {
                         const ctx = document.getElementById('c').getContext('2d');
                         const font = 'bold ' + fontPx + 'px Georgia, "Times New Roman", serif';
-                        const x = window.ThemeArt.drawClampedLabel(ctx, label, cx, 50, canvasW, font, '#000', fontPx * 0.4);
+                        const x = window.Rig.drawClampedLabel(ctx, label, cx, 50, canvasW, font, '#000', fontPx * 0.4);
                         ctx.font = font;
                         const halfW = ctx.measureText(label).width / 2;
                         return { x, left: x - halfW, right: x + halfW };
