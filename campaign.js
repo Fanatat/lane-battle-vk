@@ -19,12 +19,19 @@
       battleNumber: 1,
       trophies: 0,
       unlocked: { unlock_B: false, unlock_C: false },
-      levels: { income: 0, base_hp: 0, damage_A: 0, damage_B: 0, damage_C: 0 }
+      levels: { income: 0, base_hp: 0, damage_A: 0, damage_B: 0, damage_C: 0 },
+      // ТЗ №11: N-12/K-24 (ежедневный крючок) + закон 9/K-18 (финал-событие).
+      dailyStreak: 0,
+      lastDailyUTCDay: null, // Date.UTC(y,m,d) целого дня последнего забранного бонуса
+      milestoneShown: false
     };
   }
 
   // ТЗ №10: S-03 (сейв пишется целиком) + S-05 (номер схемы для миграций).
-  var SAVE_SCHEMA_VERSION = 1;
+  // ТЗ №11: v1→v2 — добавлены dailyStreak/lastDailyUTCDay/milestoneShown
+  // (N-12/K-24, закон 9). Реальное первое изменение схемы (S-05) — старый
+  // v1-сейв ниже мигрирует явно, не через "поле просто отсутствует".
+  var SAVE_SCHEMA_VERSION = 2;
 
   function serializeForSave(state) {
     return {
@@ -35,18 +42,19 @@
       levels: {
         income: state.levels.income, base_hp: state.levels.base_hp,
         damage_A: state.levels.damage_A, damage_B: state.levels.damage_B, damage_C: state.levels.damage_C
-      }
+      },
+      dailyStreak: state.dailyStreak,
+      lastDailyUTCDay: state.lastDailyUTCDay,
+      milestoneShown: !!state.milestoneShown
     };
   }
 
   // S-05: функция миграции обязана существовать до первого реального
-  // изменения схемы. v1 — первая версия сейва в этом треке, «старого
-  // формата» в природе ещё нет (кампания жила только в памяти вкладки
-  // до фазы 10) — миграция здесь защищает от ЧАСТИЧНО ПОВРЕЖДЁННЫХ или
-  // укороченных данных (реальная площадка/сеть портит их чаще, чем
-  // кажется), а не переписывает схему с нуля. Версия сейва НОВЕЕ
-  // текущей (билд откатили, G-14) не читается частично — дефолты, не
-  // молчаливое угадывание.
+  // изменения схемы. Сейв v1 (фаза 10) — РЕАЛЬНЫЙ старый формат в этом
+  // треке: не нёс дневной стрик и флаг финал-события вовсе — они
+  // корректно стартуют с нуля/false для мигрируемого игрока (не потеря
+  // прогресса — это НОВЫЕ системы фазы 11, у v1-игрока их и не было).
+  // Версия сейва НОВЕЕ текущей (билд откатили, G-14) не читается частично.
   function migrateSave(raw) {
     var fresh = freshCampaignState();
     if (!raw || typeof raw !== 'object') return fresh;
@@ -68,7 +76,51 @@
         if (typeof raw.levels[k] === 'number' && raw.levels[k] >= 0) out.levels[k] = raw.levels[k];
       });
     }
+    // v1→v2 (ТЗ №11): поля просто отсутствуют у v1-сейва — fresh уже даёт
+    // корректные дефолты (0/null/false), явную ветку по raw.v здесь
+    // писать не на чем ветвить осмысленно за пределами того же дефолта.
+    if (typeof raw.dailyStreak === 'number' && raw.dailyStreak >= 0) out.dailyStreak = raw.dailyStreak;
+    if (typeof raw.lastDailyUTCDay === 'number') out.lastDailyUTCDay = raw.lastDailyUTCDay;
+    if (typeof raw.milestoneShown === 'boolean') out.milestoneShown = raw.milestoneShown;
     return out;
+  }
+
+  // ---------- Ежедневный крючок возвращения (ТЗ №11, N-12/K-24) ----------
+  // Единая точка времени — вызывающая сторона обязана передавать nowMs от
+  // Platform.now() (K-24: "функция индекса и функция «сегодня» берут дату
+  // из ОДНОГО источника"), не Date.now() напрямую — здесь только чистая
+  // арифметика по уже полученному значению.
+  function utcDayKey(nowMs) {
+    var d = new Date(nowMs);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  // Чистая функция (K-06: явный boolean) — не мутирует state, чтобы UI мог
+  // спросить "есть ли что забрать" без побочных эффектов.
+  function dailyAvailable(state, nowMs) {
+    return state.lastDailyUTCDay !== utcDayKey(nowMs);
+  }
+
+  // Мутирует state. Идемпотентна в пределах одного UTC-дня (повторный
+  // вызов в тот же день ничего не начисляет повторно). Пропуск дня
+  // СНИЖАЕТ стрик на streak_decay_on_miss, а не обнуляет («стрик
+  // восстанавливается, а не сгорает дотла» — формулировка порога ТЗ №11;
+  // полного текста N-12 в 01_СТАНДАРТЫ.txt нет, decay=1 — решение
+  // исполнителя, см. BLOCKERS.md). Возвращает начисленные трофеи (0, если
+  // уже забирали сегодня).
+  function claimDaily(campaign, state, nowMs) {
+    var todayKey = utcDayKey(nowMs);
+    if (state.lastDailyUTCDay === todayKey) return 0;
+    var ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    if (state.lastDailyUTCDay === null) {
+      state.dailyStreak = 1; // самый первый заход
+    } else if (todayKey - state.lastDailyUTCDay === ONE_DAY_MS) {
+      state.dailyStreak += 1; // подряд
+    } else {
+      state.dailyStreak = Math.max(1, state.dailyStreak - campaign.daily.streak_decay_on_miss);
+    }
+    state.lastDailyUTCDay = todayKey;
+    return campaign.daily.bonus_trophies;
   }
 
   function upgradeCost(campaign, key, state) {
@@ -158,6 +210,8 @@
     buyUnlock: buyUnlock,
     buyUpgrade: buyUpgrade,
     buildBattleBalance: buildBattleBalance,
-    reward: reward
+    reward: reward,
+    dailyAvailable: dailyAvailable,
+    claimDaily: claimDaily
   };
 });

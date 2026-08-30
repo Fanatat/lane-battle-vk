@@ -175,9 +175,31 @@
   function showMenu() {
     var playBtnEl = document.getElementById('playBtn');
     if (playBtnEl) playBtnEl.textContent = campaignState && campaignState.battleNumber > 1 ? 'Продолжить' : 'Играть';
+    updateDailyBonusButton();
     menuScreenEl.classList.remove('hidden');
   }
   function hideMenu() { menuScreenEl.classList.add('hidden'); }
+
+  // ТЗ №11, N-12/K-24: ежедневный крючок возвращения. dailyAvailable —
+  // чистая функция (не мутирует), безопасно звать на каждый показ меню.
+  function updateDailyBonusButton() {
+    var btn = document.getElementById('dailyBonusBtn');
+    if (!campaignState || !window.LaneCampaign.dailyAvailable(campaignState, Platform.now())) {
+      btn.classList.add('hidden');
+      return;
+    }
+    btn.textContent = '🔥 Серия ' + (campaignState.dailyStreak + 1) + ' — забрать ' +
+      baseBalance.campaign.currency_icon + ' ' + baseBalance.campaign.daily.bonus_trophies;
+    btn.classList.remove('hidden');
+    btn.onclick = function () {
+      var gained = window.LaneCampaign.claimDaily(baseBalance.campaign, campaignState, Platform.now());
+      if (gained > 0) {
+        campaignState.trophies += gained;
+        persist();
+      }
+      updateDailyBonusButton();
+    };
+  }
 
   function openPause() {
     if (!engine || engine.getState().over) return; // нечего ставить на паузу без боя/после его конца
@@ -620,6 +642,28 @@
     Platform.save(payload);
   }
 
+  function advanceBattle() {
+    campaignState.battleNumber++;
+    persist();
+    startBattle();
+  }
+
+  // ТЗ №11: гейт interstitial МЕЖДУ битвами. R-04 — на Яндексе частотой
+  // управляет платформа (свой гейт не нужен), на ВК частоту/кулдаун задаёт
+  // игра (числа — campaign.ads, решение основателя, см. BLOCKERS.md).
+  // Сборки ещё не разделены билдом (build.py — фаза 12), поэтому гейт
+  // применяется универсально — на Яндекс-сборке потребует правки, когда
+  // адаптеры реально разъедутся по билдам.
+  var lastInterstitialAtMs = null;
+  function shouldShowInterstitial() {
+    var ads = baseBalance.campaign.ads;
+    if (campaignState.battleNumber % ads.interstitial_every_n_battles !== 0) return false;
+    var now = Platform.now();
+    if (lastInterstitialAtMs !== null && (now - lastInterstitialAtMs) < ads.interstitial_cooldown_s * 1000) return false;
+    lastInterstitialAtMs = now;
+    return true;
+  }
+
   function updateSpeedButton() {
     speedBtnEl.textContent = '×' + battleBalance.speed_levels[speedIndex];
   }
@@ -629,20 +673,54 @@
     var won = result === 'WIN';
     var gained = window.LaneCampaign.reward(baseBalance, campaignState.battleNumber, won);
     campaignState.trophies += gained;
+
+    // Закон 9/K-18: финал-событие. Кампания бесконечна (N-08) — это не
+    // "конец игры" (не обещаем того, чего нет, K-26), а рубеж по НОМЕРУ
+    // битвы, а не по её исходу — "дошёл до рубежа" верно и при победе, и
+    // при поражении (кампания продолжается в обоих случаях, ТЗ №08), в
+    // отличие от "глава ПРОЙДЕНА", что было бы ложью после поражения.
+    var reachedMilestone = campaignState.battleNumber === baseBalance.campaign.milestone_battle && !campaignState.milestoneShown;
+    if (reachedMilestone) campaignState.milestoneShown = true;
+
     updateCampaignHud();
     persist();
 
     popupTitleEl.textContent = won ? 'Победа' : 'Поражение';
     var seconds = state.timeElapsed.toFixed(1);
     popupStatsEl.textContent =
+      (reachedMilestone ? '🎉 Рубеж: битва ' + campaignState.battleNumber + ' позади. Дальше сложнее.\n\n' : '') +
       'Битва ' + campaignState.battleNumber + '\n' +
       'Длительность боя: ' + seconds + ' с\n' +
       'Юнитов заспавнено: ' + state.spawnedCount + '\n' +
       'Юнитов убито: ' + state.killedCount + '\n' +
       'Получено ' + baseBalance.campaign.currency_icon + ' ' + gained + ' (всего ' + campaignState.trophies + ')';
+    setupRewardedBonusButton(gained);
     buildUpgradeShop();
     restartBtnEl.textContent = 'Начать битву ' + (campaignState.battleNumber + 1);
     popupEl.classList.remove('hidden');
+  }
+
+  // ТЗ №11: rewarded — бонус ПОВЕРХ обычной награды, не вместо (R-09: база
+  // бесплатна). Кнопка НИКОГДА не прячется при недоступности рекламы
+  // (R-07) — showRewarded уже гарантирует бесплатную выдачу в dev-режиме/
+  // при сбое (platform.js), поэтому здесь просто всегда показываем кнопку
+  // и один раз реагируем на клик за попап (одна попытка на битву).
+  function setupRewardedBonusButton(baseGained) {
+    var btn = document.getElementById('rewardedBonusBtn');
+    var bonus = Math.round(baseGained * baseBalance.campaign.ads.rewarded_bonus_fraction);
+    btn.textContent = '🏆 Бонус за просмотр рекламы: +' + bonus;
+    btn.classList.remove('hidden');
+    btn.disabled = false;
+    btn.onclick = function () {
+      btn.disabled = true;
+      Platform.showRewarded(function onRewarded() {
+        campaignState.trophies += bonus;
+        updateCampaignHud();
+        persist();
+        btn.textContent = 'Начислено +' + bonus + ' ' + baseBalance.campaign.currency_icon;
+        btn.classList.add('hidden');
+      }, null, null);
+    };
   }
   function hidePopup() {
     popupEl.classList.add('hidden');
@@ -717,9 +795,14 @@
       updateSpeedButton();
     };
     restartBtnEl.onclick = function () {
-      campaignState.battleNumber++;
-      persist();
-      startBattle();
+      // R-01: вызов рекламы — ПЕРВАЯ инструкция обработчика, до неё ни
+      // одного await/сохранения/отрисовки — всё остальное уезжает в
+      // колбэк закрытия (advanceBattle).
+      if (shouldShowInterstitial()) {
+        Platform.showInterstitial(null, function () { advanceBattle(); });
+      } else {
+        advanceBattle();
+      }
     };
     Object.keys(cardEls).forEach(function (type) {
       cardEls[type].onclick = function () { trySpawnFromCard(type); };

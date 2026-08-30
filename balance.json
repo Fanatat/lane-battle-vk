@@ -329,6 +329,18 @@
       "damage_A": { "label": "Урон бойца A", "cost_base": 6, "step": 1, "max_level": 10, "requires": null },
       "damage_B": { "label": "Урон стрелка B", "cost_base": 8, "step": 2, "max_level": 10, "requires": "unlock_B" },
       "damage_C": { "label": "Урон щита C", "cost_base": 10, "step": 1, "max_level": 10, "requires": "unlock_C" }
-    }
+    },
+    "ads": {
+      "_comment": "ТЗ №11. Числа — ПРИКИДКА исполнителя, не решение основателя (R-04: 'Числа для ВК живут в конфиге игры и меняются ТОЛЬКО решением основателя') — см. BLOCKERS.md. interstitial_every_n_battles/cooldown гейтят ТОЛЬКО ВК-адаптер (на Яндексе частотой управляет платформа сама, R-04). rewarded_bonus_fraction — доля от обычной награды битвы, выдаётся ПОВЕРХ неё, не вместо.",
+      "interstitial_every_n_battles": 3,
+      "interstitial_cooldown_s": 90,
+      "rewarded_bonus_fraction": 0.5
+    },
+    "daily": {
+      "_comment": "ТЗ №11, N-12/K-24. Стрик считается по UTC-полуночным штампам (Platform.now(), не Date.now() напрямую — единая точка времени). Пропуск одного дня уменьшает стрик на decay, а не обнуляет его (закон 'стрик восстанавливается, а не сгорает дотла') — decay=1 не решение основателя, вопрос вкуса (полного текста N-12 нет, см. BLOCKERS.md).",
+      "bonus_trophies": 15,
+      "streak_decay_on_miss": 1
+    },
+    "milestone_battle": 15
   }
 }

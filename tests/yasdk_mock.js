@@ -14,6 +14,8 @@
 // getPlayer() бросает («платформа НЕ УМЕЕТ метод» уже после init, S-10).
 (function () {
   window.__saveLog = [];
+  window.__interstitialLog = [];
+  window.__rewardedLog = [];
   var saveStore = window.__seedSave ? JSON.parse(JSON.stringify(window.__seedSave)) : null;
 
   var fakePlayer = {
@@ -35,11 +37,13 @@
     },
     adv: {
       showFullscreenAdv: function (opts) {
+        window.__interstitialLog.push({ atMs: Date.now() });
         var cb = (opts && opts.callbacks) || {};
         if (cb.onOpen) cb.onOpen();
         setTimeout(function () { if (cb.onClose) cb.onClose(true); }, 20);
       },
       showRewardedVideo: function (opts) {
+        window.__rewardedLog.push({ atMs: Date.now() });
         var cb = (opts && opts.callbacks) || {};
         if (cb.onOpen) cb.onOpen();
         setTimeout(function () {

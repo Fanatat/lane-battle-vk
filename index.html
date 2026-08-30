@@ -106,6 +106,19 @@
     margin-top: 10px;
   }
 
+  #rewardedBonusBtn {
+    display: block; width: 100%; box-sizing: border-box; min-height: 44px; margin: 0 0 14px;
+    border-radius: 10px; border: none; background: var(--accent); color: var(--accent-ink);
+    font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  #rewardedBonusBtn.hidden { display: none; }
+  #dailyBonusBtn {
+    display: block; width: 100%; box-sizing: border-box; min-height: 44px; margin: 0 0 14px;
+    border-radius: 10px; border: 2px solid var(--border); background: var(--paper-panel-2);
+    color: var(--ink); font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  #dailyBonusBtn.hidden { display: none; }
+
   #menuSubtitle { font-size: 15px; color: var(--ink-soft); margin: 0 0 24px; }
   #menuBadges { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; font-size: 26px; }
 
@@ -161,6 +174,7 @@
     <div id="menuBox">
       <div id="menuBadges">⚔️🛡️🏹</div>
       <p id="menuSubtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
+      <button id="dailyBonusBtn" class="hidden"></button>
       <button id="playBtn">Играть</button>
     </div>
   </div>
@@ -177,6 +191,7 @@
     <div id="popupBox">
       <h1 id="popupTitle">—</h1>
       <p id="popupStats"></p>
+      <button id="rewardedBonusBtn" class="hidden"></button>
       <div id="upgradeShop"></div>
       <button id="restartBtn">Ещё раз</button>
     </div>
