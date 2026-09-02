@@ -13,7 +13,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-ROOT = Path('/home/vps_home_1/projects/game4')
+ROOT = Path(__file__).parent.parent
 PORT = 8981
 
 with sync_playwright() as p:

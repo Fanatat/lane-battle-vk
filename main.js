@@ -374,9 +374,17 @@
     }
     ctx.translate(shakeX, shakeY);
 
-    // ТЗ №13, блок 1: полоса земли с фактурой вместо отладочной линии.
+    // ТЗ №16, п.3.1/3.2: верх кадра до земли красится тёплым задником
+    // (существующий цвет палитры paper-panel, новых не вводим) ДО земли и
+    // юнитов — иначе пустой бумажный верх кадра даёт критерий 5 (доля
+    // пустого фона ≤45%) провал при любом масштабе юнита. Заливка на весь
+    // канвас (включая низ под землёй) стоила ~15fps на 24 юнитах при 1920 —
+    // не нужна: низ и так по большей части занят землёй/HP-барами/подписью.
     var groundY = layout.laneY + layout.unitSize * 0.48;
     var groundH = layout.unitSize * 0.35;
+    ctx.fillStyle = '#e9dcbd';
+    ctx.fillRect(0, 0, layout.w, groundY);
+    // ТЗ №13, блок 1: полоса земли с фактурой вместо отладочной линии.
     window.Rig.drawGroundBand(ctx, layout.w, groundY, groundH, '#e3d3a8', 'rgba(139,113,74,0.35)');
     // ТЗ №15, раздел 2, блок 5.4: редкий орнамент верха кадра — светлее
     // силуэтов, вне зоны HP-баров/подписей баз (те начинаются заметно ниже).
@@ -500,66 +508,21 @@
     ctx.globalAlpha = 1;
   }
 
-  // facingAngle: 0 = дуга смотрит вправо (игрок), Math.PI = влево (враг) —
+  // facingAngle: 0 = сектор смотрит вправо (игрок), Math.PI = влево (враг) —
   // сектор ±ARC_HALF вокруг направления вглубь полосы, не полная окружность
   // (ТЗ №15, блок 5.3). flashMs>0 — вспышка от только что отработавшего
-  // залпа (ярче и толще на затухающую долю flashMs/base_def_flash_ms).
+  // залпа (ярче на затухающую долю flashMs/base_def_flash_ms). ТЗ №16,
+  // п.3.3: раньше здесь была бледная ЛИНИЯ через пол-экрана — читалась как
+  // случайная кривая; теперь ЗАЛИВКА сектора у подножия башни (клин от
+  // центра, не контур), видна и без залпа за счёт фоновой прозрачности.
   var ARC_HALF = 0.95; // рад, ~54° в каждую сторону от направления полосы
   function drawBaseDefenseArc(frontX, side, rangePx, facingAngle, flashMs) {
     var flashFrac = battleBalance.juice.base_def_flash_ms > 0 ? flashMs / battleBalance.juice.base_def_flash_ms : 0;
-    ctx.strokeStyle = side.fill;
-    ctx.globalAlpha = 0.22 + flashFrac * 0.45;
-    ctx.lineWidth = Math.max(1, layout.unitSize * (0.06 + flashFrac * 0.05));
-    ctx.beginPath();
-    ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // п.33а: голая дуга читалась как отладочная линия — по обоим концам
-    // локального сектора ставится флажок-маркер (характерные точки границы),
-    // флаг «развевается» внутрь полосы (знак направления по side.fill/PI).
-    var flagDir = Math.cos(facingAngle) >= 0 ? 1 : -1;
-    var edgeAngleA = facingAngle - ARC_HALF;
-    var edgeAngleB = facingAngle + ARC_HALF;
-    drawBaseDefenseFlag(
-      frontX + rangePx * Math.cos(edgeAngleA),
-      layout.laneY + rangePx * Math.sin(edgeAngleA),
-      side, flagDir, flashFrac
-    );
-    drawBaseDefenseFlag(
-      frontX + rangePx * Math.cos(edgeAngleB),
-      layout.laneY + rangePx * Math.sin(edgeAngleB),
-      side, flagDir, flashFrac
-    );
-  }
-
-  // Флажок-маркер границы дальности базовой обороны: вертикальный флагшток
-  // с треугольным полотнищем, поставленный в характерной точке дуги —
-  // декоративный плейсхолдер вместо голой геометрии (п.33а общего плана).
-  // Все размеры — доли layout.unitSize из balance.json (base_defense_marker).
-  function drawBaseDefenseFlag(x, y, side, flagDir, flashFrac) {
-    var m = battleBalance.base_defense_marker;
-    if (!m) return;
-    var size = layout.unitSize;
-    var poleH = size * m.pole_h_uw;
-    var flagW = size * m.flag_w_uw * flagDir;
-    var flagH = size * m.flag_h_uw;
-    var topY = y - poleH;
-    ctx.globalAlpha = m.alpha + flashFrac * m.flash_alpha_boost;
-    // Флагшток — тем же тёмным нейтральным цветом, что подложка HP-бара
-    // (drawUnitHpBar), а не side.text: у игрока side.text тёмный и виден на
-    // бумажном фоне, у врага светлый и на бумаге сливался бы в невидимку.
-    ctx.strokeStyle = '#3a2c1c';
-    ctx.lineWidth = Math.max(1, size * m.pole_w_uw);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, topY);
-    ctx.stroke();
     ctx.fillStyle = side.fill;
+    ctx.globalAlpha = 0.16 + flashFrac * 0.5;
     ctx.beginPath();
-    ctx.moveTo(x, topY);
-    ctx.lineTo(x + flagW, topY + flagH * 0.5);
-    ctx.lineTo(x, topY + flagH);
+    ctx.moveTo(frontX, layout.laneY);
+    ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
     ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -632,13 +595,18 @@
       ctx.fill();
     }
 
-    // ТЗ №15, критерий 5: полоса HP не шире силуэта роли (rig.bodyBarW —
-    // реальная ширина тела по плечам, не декоративный масштаб слота
-    // rig.figW), тоньше прежней, зазор от макушки ≤ высоты полосы, одна
-    // высота внутри стороны.
-    var barH = size * 0.07;
-    var barGap = barH * 0.5; // ≤ высоты полосы (критерий 5)
-    drawUnitHpBar(sx - rig.bodyBarW / 2, rig.propTopY - barGap - barH, rig.bodyBarW, barH, u.hp, u.maxHp);
+    // ТЗ №16, критерий 7: полоса HP юнита рисуется ТОЛЬКО при неполном
+    // здоровье — на полном HP она висела шапкой над каждой головой и
+    // конкурировала с силуэтом (раздел 4, п.4.1).
+    if (u.hp < u.maxHp) {
+      // ТЗ №15, критерий 5: полоса HP не шире силуэта роли (rig.bodyBarW —
+      // реальная ширина тела по плечам, не декоративный масштаб слота
+      // rig.figW), тоньше прежней, зазор от макушки ≤ высоты полосы, одна
+      // высота внутри стороны.
+      var barH = size * 0.07;
+      var barGap = barH * 0.5; // ≤ высоты полосы (критерий 5)
+      drawUnitHpBar(sx - rig.bodyBarW / 2, rig.propTopY - barGap - barH, rig.bodyBarW, barH, u.hp, u.maxHp);
+    }
   }
 
   function drawDamageNumber(d) {

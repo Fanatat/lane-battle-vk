@@ -55,7 +55,7 @@
     "attack_range_logical": 6.86,
     "front_depth": 4.7,
     "siege_range_logical": 7.17,
-    "unit_height_screen_fraction": 0.125,
+    "unit_height_screen_fraction": 0.20,
     "reinforce_offset_logical": 20
   },
   "base_defense": {
@@ -63,15 +63,6 @@
     "range_logical": 24.93,
     "cooldown": 3,
     "damage": 13
-  },
-  "base_defense_marker": {
-    "_comment": "п.33а: голая дуга дальности была визуально сырой — по обоим концам локальной дуги обороны ставится флажок-маркер (пропорции в uw = доля layout.unitSize), сама дуга остаётся тонкой/полупрозрачной подложкой.",
-    "pole_h_uw": 0.42,
-    "pole_w_uw": 0.035,
-    "flag_w_uw": 0.3,
-    "flag_h_uw": 0.22,
-    "alpha": 0.7,
-    "flash_alpha_boost": 0.3
   },
   "wave_preview": {
     "_comment": "Фаза 2 ТЗ №05: индикатор следующей волны над вражеской базой — те же силуэты, что у юнитов на поле, плюс таймер. Группа значков растёт влево от правого края базы (см. main.js), чтобы не срезаться правым краем канваса.",

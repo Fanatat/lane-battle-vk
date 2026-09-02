@@ -1,20 +1,31 @@
 /*
- * rig.js — ТЗ №15: единый стик-rig для всех юнитов обеих сторон (A-16).
- * Одно тело (голова-круг, глаза-овалы, корпус, руки/ноги по два сустава),
- * роль и сторона задаются ПРОПАМИ, ГАБАРИТАМИ и СВЕТЛОТОЙ заливки — не
- * переделкой анатомии (ТЗ раздел 1). Модуль самодостаточен: не знает о
- * balance.json, engine.js или DOM — только геометрия по параметрам, чтобы
- * его можно было перенести в следующую игру студии без правок (A-12).
+ * rig.js — единый стик-rig для всех юнитов обеих сторон (A-16), доведён до
+ * ТЗ №17 (ходьба суставом, без лица) поверх ТЗ №15/16 (пропы, роли, кадр).
+ *
+ * ТЗ №15: одно тело, роль и сторона задаются ПРОПАМИ, ГАБАРИТАМИ и АКЦЕНТОМ,
+ * не переделкой анатомии. ТЗ №16: тело — чернила сплошняком, крупные пропы у
+ * плеча, кадр без пустоты. ТЗ №17 (вердикт основателя 2026-09-01, задача №3
+ * СПИСОК ЗАДАЧ.md — плотность варианта 2, торс ПАЛОЧКОЙ, а не заливкой; без
+ * лица — голова сплошной круг): торс переведён с залитого эллипса на такую
+ * же линию-обводку, что руки/ноги (растут из единой точки на её концах —
+ * иначе плотность линии вернула бы зазор), глаза убраны. Взамен константного
+ * сноса конечностей по X при неизменном Y (не человекоподобно — колено/локоть
+ * не гнулись) — 2-костный IK (twoBoneJoint) с реальным сгибом сустава и
+ * наклоном торса на ходу; знак сустава руки ПРОТИВОПОЛОЖЕН ноге (локоть
+ * гнётся к корпусу, не "в небо" — правка по замечанию основателя).
+ *
+ * Модуль самодостаточен: не знает о balance.json, engine.js или DOM — только
+ * геометрия по параметрам, чтобы его можно было перенести в следующую игру
+ * студии без правок (A-12).
  *
  * Контракт: shape ('rect'|'spike'|'dome') — тот же ключ, что был у формы
- * силуэта до этого ТЗ (theme_art.js, ТЗ №13), переосмыслен как РОЛЬ:
+ * силуэта до ТЗ №15 (theme_art.js, ТЗ №13), переосмыслен как РОЛЬ:
  * rect=боец, spike=стрелок, dome=щит. Числа/структура balance.json не
  * менялись — та же отстройка, что и раньше, другой рисующий код.
  *
  * anim = { mode: 'walk'|'attack'|'idle', t: number } — фаза анимации
  * приходит СНАРУЖИ (main.js вычисляет её из состояния юнита движка), сам
- * rig о движке ничего не знает (ТЗ раздел 2, блок 1: "игровая логика о
- * внутренностях rig не знает" — верно и в обратную сторону).
+ * rig о движке ничего не знает.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -25,6 +36,11 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
+  // Тело — ВСЕГДА чернила студии (A-01/A-18), не параметр: приёмка ТЗ №15
+  // отклонила версию, где тело красилось цветом стороны (бледный контур на
+  // бледном фоне). Сторона красит только акцент пропа (шлем/повязка/щит).
+  var INK = '#2b2723';
+
   function addEllipse(ctx, cx, cy, rx, ry, rot) {
     rx = Math.max(0.5, rx); ry = Math.max(0.5, ry); rot = rot || 0;
     var startX = cx + rx * Math.cos(rot);
@@ -33,90 +49,139 @@
     ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2);
   }
 
-  // ---------------- габариты роли (K-22 + ТЗ15 критерий 2) ----------------
-  // Тот же rig, другие пропорции: стрелок заметно тоньше и выше бойца, щит
-  // заметно ниже и шире (за счёт пропа, не корпуса) — раздел 2, блок 2.
-  // headRFrac*2 + torsoFrac + legFrac держится ≈1 (плюс фиксированный
-  // neckGap=0.03 в computeRig) — иначе голова вылезает выше topY=feetY-figH
-  // (проверено проп-тестом: overflow клипался о верх канваса и ломал
-  // сравнение bbox тела/пропа).
+  // ---------------- габариты роли (K-22 + ТЗ15 критерий 2, ТЗ16 п.1.4) ----
+  // Стрелок заметно тоньше и выше бойца, щит заметно ниже и шире (за счёт
+  // пропа, не корпуса). headRFrac*2 + torsoFrac + legFrac держится ≈1 (плюс
+  // фиксированный neckGap=0.03 в computeRig) — иначе голова вылезает выше
+  // topY=feetY-figH. Голова 22-28% роста фигуры (ТЗ16 п.1.4).
   function roleMetrics(shape) {
     if (shape === 'spike') { // стрелок
-      return { hScale: 1.20, wScale: 0.60, headRFrac: 0.135, torsoFrac: 0.28, legFrac: 0.40, limbScale: 0.80 };
+      return { hScale: 1.20, wScale: 0.60, headRFrac: 0.14, torsoFrac: 0.27, legFrac: 0.38, limbScale: 0.80 };
     }
     if (shape === 'dome') { // щит
-      return { hScale: 0.56, wScale: 0.92, headRFrac: 0.19, torsoFrac: 0.27, legFrac: 0.32, limbScale: 1.20 };
+      return { hScale: 0.56, wScale: 0.92, headRFrac: 0.145, torsoFrac: 0.26, legFrac: 0.30, limbScale: 1.20 };
     }
-    return { hScale: 1.0, wScale: 0.86, headRFrac: 0.145, torsoFrac: 0.28, legFrac: 0.40, limbScale: 1.0 }; // боец
+    return { hScale: 1.0, wScale: 0.86, headRFrac: 0.15, torsoFrac: 0.27, legFrac: 0.38, limbScale: 1.0 }; // боец
+  }
+
+  // 2-костный IK, вырожденный для двух равных сегментов (бедро=голень,
+  // плечо=предплечье): сустав лежит на середине хорды origin->target со
+  // сдвигом перпендикулярно хорде на h=0.5*sqrt(segLen²-d²), d=|origin-target|
+  // (классическая 2-bone IK). sign фиксирует сторону сгиба — не на усмотрение
+  // кадра: колено гнётся вперёд (sign=+1), локоть — назад, к корпусу
+  // (sign=-1), это анатомическое требование основателя (ТЗ17 п.2.1, критерий 1а).
+  function twoBoneJoint(originX, originY, targetX, targetY, segLen, sign) {
+    var dx = targetX - originX, dy = targetY - originY;
+    var d = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+    var clampedD = Math.min(d, segLen); // цель дальше вытянутой конечности — берём вытянутую
+    var ux = dx / d, uy = dy / d;
+    var endX = originX + ux * clampedD, endY = originY + uy * clampedD;
+    var half = segLen * 0.5;
+    var h = Math.sqrt(Math.max(0, half * half - (clampedD * 0.5) * (clampedD * 0.5)));
+    var midX = originX + ux * clampedD * 0.5, midY = originY + uy * clampedD * 0.5;
+    var perpX = uy, perpY = -ux;
+    return { jx: midX + perpX * h * sign, jy: midY + perpY * h * sign, ex: endX, ey: endY };
   }
 
   // ---------------- геометрия rig (общая для draw и flash-path) ----------------
   function computeRig(shape, x, y, w, h, anim) {
     anim = anim || { mode: 'idle', t: 0 };
     var m = roleMetrics(shape);
-    var cx = x + w / 2;
+    var cxSlot = x + w / 2;
     var feetY = y + h;
     var figH = h * m.hScale;
     var headR = figH * m.headRFrac;
     var neckGap = figH * 0.03;
     var torsoLen = figH * m.torsoFrac;
     var legLen = figH * m.legFrac;
-    var hipY = feetY - legLen;
-    var shoulderY = hipY - torsoLen;
-    var headCy = shoulderY - neckGap - headR;
+    var armLen = torsoLen; // антропометрично: плечо+предплечье ≈ длине торса
 
-    // Покачивание корпуса в покое — всегда небольшое, поверх ходьбы/атаки,
-    // чтобы юнит никогда не стоял истуканом (раздел 2, блок 3).
     var idleSway = Math.sin(anim.t * 2.1) * figH * 0.012;
-    var lean = 0;
+    var stance = figH * 0.06; // разнос стоп/кистей в покое, чтобы не слипались на одну линию
+    var stride = figH * 0.16 * (m.limbScale > 1 ? 0.85 : 1);
+    var armStride = stride * 0.62;
+    var maxLift = legLen * 0.22;
 
-    var strideSpread = figH * 0.17 * (m.limbScale > 1 ? 0.85 : 1); // короче шаг у широкого щита
-    var legSwingA = 0, legSwingB = 0, armSwingA = 0, armSwingB = 0;
+    var hipX = cxSlot, hipY = feetY - legLen;
+    var leanAngle = 0;
+    var legTargetA, legTargetB, armTargetA, armTargetB;
+
     if (anim.mode === 'walk') {
-      var strideFreq = 0.9; // логических единиц на цикл шага, деterministично от anim.t = u.x
-      var phase = anim.t * strideFreq;
-      legSwingA = Math.sin(phase) * strideSpread;
-      legSwingB = Math.sin(phase + Math.PI) * strideSpread;
-      armSwingA = Math.sin(phase + Math.PI) * strideSpread * 0.6;
-      armSwingB = Math.sin(phase) * strideSpread * 0.6;
+      leanAngle = 0.13; // фиксированный наклон корпуса вперёд на ходу (ТЗ17)
+      var freq = 0.9, phase = anim.t * freq;
+      var sA = Math.sin(phase), sB = Math.sin(phase + Math.PI);
+      var liftA = Math.max(0, Math.cos(phase)) * maxLift; // стопа отрывается только в фазе выноса
+      var liftB = Math.max(0, Math.cos(phase + Math.PI)) * maxLift;
+      legTargetA = { x: hipX + sA * stride, y: feetY - liftA };
+      legTargetB = { x: hipX + sB * stride, y: feetY - liftB };
+      armTargetA = { x: hipX + sB * armStride, y: null }; // контралатерально ноге
+      armTargetB = { x: hipX + sA * armStride, y: null };
     } else if (anim.mode === 'attack') {
-      // замах-удар: 0..1 за цикл атаки, пик размаха на середине (T-05 юз).
       var t = Math.max(0, Math.min(1, anim.t));
       var swing = Math.sin(t * Math.PI);
-      armSwingA = -swing * figH * 0.30; // "оружейная" рука уходит вперёд/вверх
-      armSwingB = swing * figH * 0.08;
-      lean = swing * figH * 0.03;
+      leanAngle = swing * 0.16;
+      legTargetA = { x: hipX - stance, y: feetY };
+      legTargetB = { x: hipX + stance, y: feetY };
+      armTargetA = { x: hipX - stance * 1.4, y: null };
+      armTargetB = { x: hipX + stance * 1.4, y: null };
     } else {
-      armSwingA = idleSway * 0.6;
-      armSwingB = -idleSway * 0.6;
+      legTargetA = { x: hipX - stance, y: feetY - maxLift * 0.10 };
+      legTargetB = { x: hipX + stance, y: feetY - maxLift * 0.10 };
+      armTargetA = { x: hipX - stance * 1.2 + idleSway * 0.6, y: null };
+      armTargetB = { x: hipX + stance * 1.2 - idleSway * 0.6, y: null };
     }
 
-    var shoulderSpread = figH * 0.14 * m.limbScale;
-    var hipSpread = figH * 0.11 * m.limbScale;
-    var elbowDrop = figH * 0.15;
-    var handDrop = figH * 0.15;
-    var kneeDrop = legLen * 0.52;
-    var footDrop = legLen * 0.48;
+    var shoulderX = hipX + Math.sin(leanAngle) * torsoLen;
+    var shoulderY = hipY - Math.cos(leanAngle) * torsoLen + idleSway;
+    var headCx = shoulderX + Math.sin(leanAngle) * (neckGap + headR);
+    var headCy = shoulderY - Math.cos(leanAngle) * (neckGap + headR);
+
+    armTargetA.y = shoulderY + armLen * 0.82;
+    armTargetB.y = shoulderY + armLen * 0.82;
+
+    var legL = twoBoneJoint(hipX, hipY, legTargetA.x, legTargetA.y, legLen, 1);
+    var legR = twoBoneJoint(hipX, hipY, legTargetB.x, legTargetB.y, legLen, 1);
+    var armL = twoBoneJoint(shoulderX, shoulderY, armTargetA.x, armTargetA.y, armLen, -1);
+    var armR = twoBoneJoint(shoulderX, shoulderY, armTargetB.x, armTargetB.y, armLen, -1);
+
+    // Угол оружия — своя дуга у плеча, НЕ зависящая от кисти (ТЗ16 п.2.1/2.4).
+    // База наклона (WEAPON_REST) — клинок под углом вперёд-вверх, а не строго
+    // вертикально над плечом: чисто вертикальный клинок визуально сливался с
+    // гребнем шлема ("две антенны" над головой) — тот же дефект читаемости,
+    // что ТЗ16 разбирал для голой дуги дальности обороны. Замах доворачивает
+    // клинок дальше вперёд-вниз по дуге, чтобы удар был виден кадр-к-кадру
+    // (критерий 8).
+    var WEAPON_REST = 0.45;
+    var weaponAngle;
+    if (anim.mode === 'attack') {
+      weaponAngle = WEAPON_REST + (Math.sin(Math.max(0, Math.min(1, anim.t)) * Math.PI)) * 1.05;
+    } else if (anim.mode === 'walk') {
+      weaponAngle = WEAPON_REST + Math.sin(anim.t * 0.9) * 0.12;
+    } else {
+      weaponAngle = WEAPON_REST + Math.sin(anim.t * 2.1) * 0.08;
+    }
+    var weaponLen = figH * 0.38; // ТЗ16 п.2.1: оружие держится у плеча
+    var weaponSideOffset = figH * 0.09 * m.limbScale;
+
+    var helmetTopY = headCy - headR * 1.95;
+    var weaponTopY = shoulderY - weaponLen - figH * 0.03;
 
     return {
-      m: m, cx: cx + lean, feetY: feetY, figH: figH, figW: w * m.wScale,
-      // bodyBarW — реальная ширина тела (плечи+запас), НЕ то же самое, что
-      // figW (масштаб слота для пропов/тени, декоративная величина): HP-бар
-      // юнита (main.js критерий 5) обязан не быть шире РЕАЛЬНО нарисованных
-      // конечностей, а не масштаба слота — плечи единственная величина,
-      // которая эти конечности реально позиционирует.
-      bodyBarW: shoulderSpread * 2.3,
-      headCx: cx + lean, headCy: headCy + idleSway, headR: headR,
-      // Верх шлема с гребнем/рогом (пропы, раздел 1) — самый высокий из
-      // двух вариантов стороны с запасом, чтобы HP-бар не резал проп ни у
-      // игрока, ни у врага (main.js критерий 5: зазор от макушки).
-      propTopY: headCy + idleSway - headR * 1.95,
-      shoulderY: shoulderY + idleSway, hipY: hipY,
-      shoulderSpread: shoulderSpread, hipSpread: hipSpread,
-      legL: { hx: cx - hipSpread, hy: hipY, kx: cx - hipSpread + legSwingA * 0.5, ky: hipY + kneeDrop, fx: cx - hipSpread + legSwingA, fy: feetY },
-      legR: { hx: cx + hipSpread, hy: hipY, kx: cx + hipSpread + legSwingB * 0.5, ky: hipY + kneeDrop, fx: cx + hipSpread + legSwingB, fy: feetY },
-      armL: { sx: cx - shoulderSpread + lean, sy: shoulderY + idleSway, ex: cx - shoulderSpread + armSwingA * 0.6 + lean, ey: shoulderY + idleSway + elbowDrop, hx: cx - shoulderSpread + armSwingA + lean, hy: shoulderY + idleSway + elbowDrop + handDrop },
-      armR: { sx: cx + shoulderSpread + lean, sy: shoulderY + idleSway, ex: cx + shoulderSpread + armSwingB * 0.6 + lean, ey: shoulderY + idleSway + elbowDrop, hx: cx + shoulderSpread + armSwingB + lean, hy: shoulderY + idleSway + elbowDrop + handDrop }
+      m: m, cx: hipX, feetY: feetY, figH: figH, figW: w * m.wScale,
+      weaponLen: weaponLen, weaponAngle: weaponAngle, weaponSideOffset: weaponSideOffset,
+      // bodyBarW — ширина HP-бара юнита: доля figW (уже несёт разницу ролей
+      // по wScale/limbScale), не привязана к разносу плеч (торс теперь без
+      // ширины — единая линия, ТЗ17).
+      bodyBarW: w * m.wScale * 0.55,
+      headCx: headCx, headCy: headCy, headR: headR,
+      // Верх самой высокой детали (шлем/клинок) с запасом, чтобы HP-бар
+      // юнита (main.js критерий 5) не резал проп ни у игрока, ни у врага.
+      propTopY: Math.min(helmetTopY, weaponTopY),
+      shoulderY: shoulderY, hipY: hipY, shoulderX: shoulderX, hipX: hipX,
+      legL: { hx: hipX, hy: hipY, kx: legL.jx, ky: legL.jy, fx: legL.ex, fy: legL.ey },
+      legR: { hx: hipX, hy: hipY, kx: legR.jx, ky: legR.jy, fx: legR.ex, fy: legR.ey },
+      armL: { sx: shoulderX, sy: shoulderY, ex: armL.jx, ey: armL.jy, hx: armL.ex, hy: armL.ey },
+      armR: { sx: shoulderX, sy: shoulderY, ex: armR.jx, ey: armR.jy, hx: armR.ex, hy: armR.ey }
     };
   }
 
@@ -126,43 +191,52 @@
     ctx.arc(rig.headCx, rig.headCy, rig.headR, 0, Math.PI * 2);
   }
 
-  function pathTorso(ctx, rig) {
-    addEllipse(ctx, rig.cx, (rig.shoulderY + rig.hipY) / 2, rig.figH * 0.085, (rig.hipY - rig.shoulderY) / 2 + rig.figH * 0.02);
-  }
-
-  function drawLimbLine(ctx, ax, ay, bx, by, cx2, cy2) {
+  function drawLimbLine(ctx, ax, ay, bx, by, cx2, cy2, jointR) {
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo(bx, by);
     ctx.lineTo(cx2, cy2);
     ctx.stroke();
+    if (jointR > 0) {
+      ctx.beginPath();
+      ctx.arc(bx, by, jointR, 0, Math.PI * 2);
+      ctx.fillStyle = INK;
+      ctx.fill();
+    }
   }
 
-  function drawLimbs(ctx, rig, strokeStyle, lineWidth) {
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = Math.max(1, lineWidth * rig.m.limbScale);
+  // ТЗ17: торс — палочка (обводка) от плеча до таза, той же толщины, что
+  // руки/ноги (плотность варианта 2 из задачи №3 — толщиной линии, не
+  // площадью заливки). Конечности растут из ЕДИНОЙ точки на её концах —
+  // иначе безобъёмная линия вернула бы зазор (тот же приём, что в
+  // drawVariant2Stick черновика задачи №3). Суставы (таз/плечи/колени/
+  // локти) — залитые точки, читаются как сочленения скелета, не обрыв линии.
+  function drawSkeleton(ctx, rig, lineWidth) {
+    var lw = Math.max(3, lineWidth * rig.m.limbScale * 2.2);
+    var jointR = lw * 0.42;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = lw;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    drawLimbLine(ctx, rig.legL.hx, rig.legL.hy, rig.legL.kx, rig.legL.ky, rig.legL.fx, rig.legL.fy);
-    drawLimbLine(ctx, rig.legR.hx, rig.legR.hy, rig.legR.kx, rig.legR.ky, rig.legR.fx, rig.legR.fy);
-    drawLimbLine(ctx, rig.armL.sx, rig.armL.sy, rig.armL.ex, rig.armL.ey, rig.armL.hx, rig.armL.hy);
-    drawLimbLine(ctx, rig.armR.sx, rig.armR.sy, rig.armR.ex, rig.armR.ey, rig.armR.hx, rig.armR.hy);
-  }
 
-  function drawEyes(ctx, rig, strokeStyle) {
-    var eyeR = rig.headR * 0.22;
-    var offX = rig.headR * 0.42;
-    var offY = -rig.headR * 0.08;
-    ctx.fillStyle = strokeStyle;
     ctx.beginPath();
-    addEllipse(ctx, rig.headCx - offX, rig.headCy + offY, eyeR, eyeR * 1.15);
-    addEllipse(ctx, rig.headCx + offX, rig.headCy + offY, eyeR, eyeR * 1.15);
-    ctx.fill();
+    ctx.moveTo(rig.hipX, rig.hipY);
+    ctx.lineTo(rig.shoulderX, rig.shoulderY);
+    ctx.stroke();
+
+    drawLimbLine(ctx, rig.legL.hx, rig.legL.hy, rig.legL.kx, rig.legL.ky, rig.legL.fx, rig.legL.fy, jointR);
+    drawLimbLine(ctx, rig.legR.hx, rig.legR.hy, rig.legR.kx, rig.legR.ky, rig.legR.fx, rig.legR.fy, jointR);
+    drawLimbLine(ctx, rig.armL.sx, rig.armL.sy, rig.armL.ex, rig.armL.ey, rig.armL.hx, rig.armL.hy, jointR);
+    drawLimbLine(ctx, rig.armR.sx, rig.armR.sy, rig.armR.ex, rig.armR.ey, rig.armR.hx, rig.armR.hy, jointR);
+
+    ctx.beginPath(); ctx.arc(rig.hipX, rig.hipY, jointR, 0, Math.PI * 2); ctx.fillStyle = INK; ctx.fill();
+    ctx.beginPath(); ctx.arc(rig.shoulderX, rig.shoulderY, jointR, 0, Math.PI * 2); ctx.fillStyle = INK; ctx.fill();
   }
 
   // ---------------- пропы: обязаны выступать за контур тела (раздел 1) ----------------
   // helmet — та же роль, разная форма по СТОРОНЕ (не только заливка):
-  // игрок — круглый шлем с гребнем, враг — гранёный шлем с рогом.
+  // игрок — круглый шлем с гребнем, враг — гранёный шлем с рогом. Только
+  // боец/щит (п.2.2: у стрелка шлема нет вовсе — см. pathHeadband).
   function pathHelmet(ctx, rig, isPlayer) {
     var r = rig.headR * 1.22;
     if (isPlayer) {
@@ -187,37 +261,68 @@
     }
   }
 
-  // короткое оружие бойца/щита — в руке, явно выступает за кисть.
-  function drawMeleeWeapon(ctx, rig, hand, fillStyle, strokeStyle, lineWidth) {
-    var dx = hand.hx - hand.ex, dy = hand.hy - hand.ey;
-    var len = Math.sqrt(dx * dx + dy * dy) || 1;
-    var ux = dx / len, uy = dy / len;
-    var tipX = hand.hx + ux * rig.figH * 0.30;
-    var tipY = hand.hy + uy * rig.figH * 0.30;
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = Math.max(1, lineWidth * 0.9);
-    ctx.beginPath();
-    ctx.moveTo(hand.hx, hand.hy);
-    ctx.lineTo(tipX, tipY);
-    ctx.stroke();
-    ctx.beginPath();
-    addEllipse(ctx, tipX, tipY, rig.figH * 0.06, rig.figH * 0.06);
-    ctx.fillStyle = fillStyle;
-    ctx.fill();
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = Math.max(1, lineWidth * 0.7);
-    ctx.stroke();
+  // Повязка стрелка (п.2.2: "без шлема, повязка или капюшон") — тонкая
+  // акцентная лента через лоб с узлом-хвостом сбоку, вместо полного шлема.
+  function pathHeadband(ctx, rig, isPlayer) {
+    var r = rig.headR;
+    var bandHalf = r * 0.16;
+    var y = rig.headCy - r * 0.25;
+    ctx.moveTo(rig.headCx - r * 0.98, y - bandHalf);
+    ctx.lineTo(rig.headCx + r * 0.98, y - bandHalf);
+    ctx.lineTo(rig.headCx + r * 0.98, y + bandHalf);
+    ctx.lineTo(rig.headCx - r * 0.98, y + bandHalf);
+    ctx.closePath();
+    // хвост узла — выступает за контур головы сбоку
+    var tailX = isPlayer ? rig.headCx - r * 1.05 : rig.headCx + r * 1.05;
+    var tailDir = isPlayer ? -1 : 1;
+    ctx.moveTo(tailX, y - bandHalf * 0.6);
+    ctx.lineTo(tailX + tailDir * r * 0.55, y + r * 0.1);
+    ctx.lineTo(tailX, y + bandHalf * 1.4);
+    ctx.closePath();
   }
 
-  // лук стрелка — небольшая дуга, выступающая вбок от кисти (не полукруг
-  // через всю фигуру — прежний угловой диапазон разворачивался "длинным"
-  // путём и рисовал почти полную окружность вместо лука).
+  // Оружие бойца/щита — держится У ПЛЕЧА (п.2.1: раньше свисало кистью до
+  // колена). Пивот НЕ зависит от текущей позиции кисти — фиксирован у плеча
+  // со смещением в сторону (torso теперь линия без ширины, ТЗ17), угол
+  // отдельно анимируется rig.weaponAngle (0 = прямо вверх).
+  function drawMeleeWeapon(ctx, rig, accentColor) {
+    var pivotX = rig.shoulderX + rig.weaponSideOffset;
+    var pivotY = rig.shoulderY - rig.figH * 0.02;
+    var angle = -Math.PI / 2 + rig.weaponAngle;
+    var tipX = pivotX + Math.cos(angle) * rig.weaponLen;
+    var tipY = pivotY + Math.sin(angle) * rig.weaponLen;
+    ctx.strokeStyle = INK;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(2, rig.figH * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(pivotX, pivotY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    // крестовина — короткая поперечина у рукояти, читается как оружие, не палка.
+    var crossX = pivotX + Math.cos(angle) * rig.weaponLen * 0.22;
+    var crossY = pivotY + Math.sin(angle) * rig.weaponLen * 0.22;
+    var px = -Math.sin(angle), py = Math.cos(angle);
+    var crossHalf = rig.figH * 0.09;
+    ctx.lineWidth = Math.max(1.5, rig.figH * 0.035);
+    ctx.beginPath();
+    ctx.moveTo(crossX - px * crossHalf, crossY - py * crossHalf);
+    ctx.lineTo(crossX + px * crossHalf, crossY + py * crossHalf);
+    ctx.stroke();
+    // навершие рукояти — акцент стороны, у самого плеча.
+    ctx.beginPath();
+    addEllipse(ctx, pivotX, pivotY, rig.figH * 0.045, rig.figH * 0.045);
+    ctx.fillStyle = accentColor;
+    ctx.fill();
+  }
+
+  // лук стрелка — дуга у кисти, выступающая вбок от тела (не полукруг через
+  // всю фигуру). Размер ≥40% роста фигуры (п.2.2).
   function drawBow(ctx, rig, hand, strokeStyle, lineWidth) {
-    var bowR = rig.figH * 0.29;
+    var bowR = rig.figH * 0.34;
     var half = 0.78; // рад, ~45° в каждую сторону от направления кисти
     var ccx = hand.hx, ccy = hand.hy;
     ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = Math.max(1, lineWidth * 0.85);
+    ctx.lineWidth = Math.max(1.5, lineWidth * 1.1);
     ctx.beginPath();
     ctx.arc(ccx, ccy, bowR, -half, half, false);
     ctx.stroke();
@@ -232,21 +337,22 @@
     ctx.stroke();
   }
 
-  // щит — крупный, перед корпусом, шире и заметно выступает за силуэт тела
-  // с обеих сторон (K-22 проп-тест раздел 3, п.3).
+  // щит — крупный, ПЕРЕД корпусом, заметно выступает за силуэт тела с обеих
+  // сторон (раздел 2, п.2.3) — торс теперь линия, поэтому центрирование на
+  // rig.cx само по себе даёт выступ и слева, и справа.
   function pathShield(ctx, rig) {
-    var cx = rig.cx + rig.figW * 0.34;
-    var cy = (rig.shoulderY + rig.hipY) / 2;
-    var rx = rig.figH * 0.30;
+    var cx = rig.cx;
+    var cy = (rig.shoulderY + rig.hipY) / 2 + rig.figH * 0.03;
+    var rx = rig.figH * 0.32;
     var ry = rig.figH * 0.40;
     addEllipse(ctx, cx, cy, rx, ry);
   }
 
   function drawShieldDetail(ctx, rig, strokeStyle, lineWidth) {
-    var cx = rig.cx + rig.figW * 0.34;
-    var cy = (rig.shoulderY + rig.hipY) / 2;
-    var rx = rig.figH * 0.30, ry = rig.figH * 0.40;
-    ctx.strokeStyle = strokeStyle;
+    var cx = rig.cx;
+    var cy = (rig.shoulderY + rig.hipY) / 2 + rig.figH * 0.03;
+    var rx = rig.figH * 0.32, ry = rig.figH * 0.40;
+    ctx.strokeStyle = INK;
     ctx.lineWidth = Math.max(0.6, lineWidth * 0.5);
     ctx.beginPath();
     ctx.moveTo(cx, cy - ry * 0.55);
@@ -256,32 +362,29 @@
     ctx.stroke();
   }
 
-  // Всё, что заливается сплошным цветом тела/пропов (голова, торс, шлем,
-  // щит) — один path, используется для белой вспышки попадания
-  // (pathUnitFillShapes ниже): флэш белит именно заливаемые части,
-  // конечности остаются линиями (тот же приём, что был у ТЗ13).
+  // Заливаемые части (голова, шлем/повязка, щит) — один path, используется
+  // для белой вспышки попадания (pathUnitFillShapes ниже): флэш белит именно
+  // заливаемые части. Торс/конечности — линии, не заливаются флэшем (то же,
+  // что было со штрихами конечностей в ТЗ13/15/16).
   function pathFillGroup(ctx, shape, isPlayer, rig) {
     pathHead(ctx, rig);
-    pathTorso(ctx, rig);
-    pathHelmet(ctx, rig, isPlayer);
+    if (shape === 'spike') pathHeadband(ctx, rig, isPlayer);
+    else pathHelmet(ctx, rig, isPlayer);
     if (shape === 'dome') pathShield(ctx, rig);
   }
 
   function drawProps(ctx, shape, isPlayer, rig, fillStyle, strokeStyle, lineWidth) {
     if (shape === 'spike') {
-      drawBow(ctx, rig, rig.armR, strokeStyle, lineWidth);
+      drawBow(ctx, rig, rig.armR, INK, lineWidth);
     } else {
-      drawMeleeWeapon(ctx, rig, rig.armR, fillStyle, strokeStyle, lineWidth);
+      drawMeleeWeapon(ctx, rig, fillStyle);
     }
     if (shape === 'dome') {
       drawShieldDetail(ctx, rig, strokeStyle, lineWidth);
     }
   }
 
-  // Тень под юнитом на земле (раздел 2, блок 5.4) — плоский эллипс в
-  // палитре, новых цветов не вводит (rgba(0,0,0,alpha), тот же приём,
-  // что уже использовался в декоре theme_art.js ТЗ13, только здесь под
-  // ногами).
+  // Тень под юнитом на земле — плоский эллипс, новых цветов не вводит.
   function drawUnitShadow(ctx, rig) {
     ctx.beginPath();
     addEllipse(ctx, rig.cx, rig.feetY + rig.figH * 0.02, rig.figW * 0.30, rig.figH * 0.05);
@@ -289,35 +392,34 @@
     ctx.fill();
   }
 
-  // Только общее тело rig (голова, торс, конечности, глаза, тень) — БЕЗ
-  // пропов. Экспортируется отдельно, чтобы проп-тест (ТЗ15 раздел 3, п.3)
-  // мог сравнить контур тела с полной отрисовкой и убедиться, что пропы
-  // выступают за него, а не совпадение с pathFillGroup внутри drawUnit
-  // держало бы эту проверку недоступной снаружи модуля.
-  function drawBodyOnly(ctx, rig, fillStyle, strokeStyle, lineWidth) {
+  // Только общее тело rig (скелет+голова, БЕЗ пропов). Экспортируется
+  // отдельно, чтобы проп-тест мог сравнить контур тела с полной отрисовкой.
+  function drawBodyOnly(ctx, rig, lineWidth) {
     drawUnitShadow(ctx, rig);
-    drawLimbs(ctx, rig, strokeStyle, lineWidth);
+    drawSkeleton(ctx, rig, lineWidth);
     ctx.beginPath();
     pathHead(ctx, rig);
-    pathTorso(ctx, rig);
-    ctx.fillStyle = fillStyle;
+    ctx.fillStyle = INK;
     ctx.fill();
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = lineWidth;
-    ctx.stroke();
-    drawEyes(ctx, rig, strokeStyle);
+    // Ни обводки, ни глаз (ТЗ17: "у человечков лица рисовать не нужно" —
+    // отменяет ТЗ16 п.1.2 для этой линии развития).
   }
 
   function drawUnit(ctx, shape, isPlayer, x, y, w, h, fillStyle, strokeStyle, lineWidth, anim) {
     var rig = computeRig(shape, x, y, w, h, anim);
-    drawBodyOnly(ctx, rig, fillStyle, strokeStyle, lineWidth);
+    drawBodyOnly(ctx, rig, lineWidth);
+    // fillStyle здесь — АКЦЕНТ стороны (balance.json.sides.*.fill), красится
+    // только на шлем/повязку/щит, не на тело.
     ctx.beginPath();
-    pathHelmet(ctx, rig, isPlayer);
+    if (shape === 'spike') pathHeadband(ctx, rig, isPlayer);
+    else pathHelmet(ctx, rig, isPlayer);
     if (shape === 'dome') pathShield(ctx, rig);
     ctx.fillStyle = fillStyle;
     ctx.fill();
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = lineWidth;
+    // Обводка акцента — ВСЕГДА чернила, сплошняком: акцент игрока почти
+    // сливается со светлым бумажным фоном без тёмного контура.
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(lineWidth, rig.figH * 0.025);
     ctx.stroke();
     drawProps(ctx, shape, isPlayer, rig, fillStyle, strokeStyle, lineWidth);
     return rig;
@@ -325,26 +427,19 @@
 
   // shape-уровня обёртка над drawBodyOnly — для тестов/переиспользования
   // без ручного computeRig снаружи модуля.
-  function drawUnitBodyOnly(ctx, shape, x, y, w, h, fillStyle, strokeStyle, lineWidth, anim) {
+  function drawUnitBodyOnly(ctx, shape, x, y, w, h, lineWidth, anim) {
     var rig = computeRig(shape, x, y, w, h, anim);
-    drawBodyOnly(ctx, rig, fillStyle, strokeStyle, lineWidth);
+    drawBodyOnly(ctx, rig, lineWidth);
     return rig;
   }
 
-  // Путь только заливаемых частей — для вспышки попадания в main.js (тот же
-  // приём, что pathUnitSilhouette в theme_art.js ТЗ13: caller делает
-  // beginPath()/fill() сам поверх обычной отрисовки).
+  // Путь только заливаемых частей — для вспышки попадания в main.js.
   function pathUnitFillShapes(ctx, shape, isPlayer, x, y, w, h, anim) {
     var rig = computeRig(shape, x, y, w, h, anim);
     pathFillGroup(ctx, shape, isPlayer, rig);
   }
 
   // ---------------- базы: башня (игрок) / частокол (враг) ----------------
-  // Плоские силуэты укреплений вместо муравейника/термитника (ТЗ15 блок 4),
-  // та же палитра (side.fill), надстройка НАД существующим прямоугольником-
-  // хитбоксом (main.js drawBase оставляет геометрию/HP-бар/подпись как
-  // есть — здесь только декор). Высота ограничена, чтобы не залезать в зону
-  // HP-бара/подписи (унаследовано из theme_art.js ТЗ13, тот же расчёт).
   function drawTower(ctx, base, fillStyle, strokeStyle) {
     var cx = base.x + base.w / 2;
     var topY = base.y - base.h * 0.11;
@@ -408,8 +503,7 @@
     else drawPalisade(ctx, base, fillStyle, strokeStyle);
   }
 
-  // ---------------- земля полосы (перенесено из theme_art.js ТЗ13 без
-  // изменений — не про тему юнитов, генерик-декор ленты боя) ----------------
+  // ---------------- земля полосы (theme_art.js ТЗ13, без изменений) --------
   function drawGroundBand(ctx, w, groundY, bandHeight, baseColor, speckColor) {
     ctx.fillStyle = baseColor;
     ctx.fillRect(0, groundY, w, bandHeight);
@@ -434,9 +528,6 @@
   }
 
   // ---------------- декор верха кадра (ТЗ15 блок 5.4 / критерий 6) --------
-  // Редкие вымпелы на шнуре вдоль верхней кромки канваса — тема "стик-
-  // армии", светлее силуэтов, детерминированный узор (без Math.random()),
-  // чтобы не мигал перерисовкой кадра.
   function drawTopBanner(ctx, w, topY, height, ropeColor, pennantColor) {
     ctx.strokeStyle = ropeColor;
     ctx.lineWidth = Math.max(1, height * 0.08);
@@ -461,15 +552,17 @@
   }
 
   // ---------------- подписи баз без обрезки краем канваса (theme_art.js
-  // ТЗ13, перенесено без изменений — раздел 2, блок 5, п.5.1) --------------
+  // ТЗ13, клэмп по РЕАЛЬНЫМ чернилам глифа — ТЗ16 п.4.2) --------------
   function drawClampedLabel(ctx, text, centerX, y, canvasW, font, fillStyle, padPx) {
     ctx.font = font;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    var halfW = ctx.measureText(text).width / 2;
+    var m = ctx.measureText(text);
+    var inkLeft = m.actualBoundingBoxLeft;
+    var inkRight = m.actualBoundingBoxRight;
     var pad = padPx;
-    var minX = pad + halfW;
-    var maxX = canvasW - pad - halfW;
+    var minX = pad + inkLeft;
+    var maxX = canvasW - pad - inkRight;
     var x = centerX;
     if (minX <= maxX) {
       x = Math.min(maxX, Math.max(minX, centerX));
