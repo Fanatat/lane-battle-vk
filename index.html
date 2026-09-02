@@ -47,17 +47,17 @@
   }
   #foodBarFill { height: 100%; width: 0%; background: var(--accent); transition: width 80ms linear; }
 
-  #speedBtn, #pauseBtn {
+  #speedBtn, #pauseBtn, #fullscreenBtn {
     flex: 0 0 auto; min-width: 44px; min-height: 40px; border-radius: 10px; border: none;
     background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 16px; cursor: pointer;
   }
-  #speedBtn:active, #pauseBtn:active { filter: brightness(0.9); }
+  #speedBtn:active, #pauseBtn:active, #fullscreenBtn:active { filter: brightness(0.9); }
   #topBarRight { display: flex; align-items: center; gap: 8px; }
 
   @media (max-width: 420px) {
     #topBar { font-size: 13px; padding: 6px 6px; gap: 4px 6px; }
     #foodBarTrack { width: 56px; }
-    #speedBtn, #pauseBtn { min-width: 42px; min-height: 42px; font-size: 13px; }
+    #speedBtn, #pauseBtn, #fullscreenBtn { min-width: 42px; min-height: 42px; font-size: 13px; }
   }
 
   #cards {
@@ -122,6 +122,9 @@
 
   #menuTitle { font-size: 30px; margin: 0 0 6px; letter-spacing: 0.5px; }
   #menuSubtitle { font-size: 15px; color: var(--ink-soft); margin: 0 0 24px; }
+  #menuHowToPlay { font-size: 13px; color: var(--ink-soft); margin: -14px 0 20px; line-height: 1.4; }
+  #menuFeedback { font-size: 11px; color: var(--ink-soft); opacity: 0.7; margin: 18px 0 0; }
+  #menuFeedback a { color: inherit; }
   #menuBadges { display: flex; justify-content: center; gap: 14px; margin-bottom: 20px; }
   #menuBadges canvas { width: 46px; height: 46px; }
 
@@ -164,6 +167,7 @@
         <div id="foodBarTrack"><div id="foodBarFill"></div></div>
       </div>
       <div id="topBarRight">
+        <button id="fullscreenBtn" class="hidden">⛶</button>
         <button id="pauseBtn">⏸</button>
         <button id="speedBtn">×1</button>
       </div>
@@ -191,8 +195,15 @@
         <canvas id="menuIconC" width="46" height="46"></canvas>
       </div>
       <p id="menuSubtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
+      <!-- Требования площадки, п.2.2: полное описание управления в игре.
+           Одна строка, без отдельного туториал-экрана (CLAUDE.md границы) —
+           три касания дают всё управление: карточка спавнит юнита, кнопка
+           скорости листает ×1/×2/×3, пауза сверху. -->
+      <p id="menuHowToPlay">Тапни по карточке юнита внизу — он выйдет на полосу и будет сражаться сам. Кнопка ×1 наверху ускоряет бой, ⏸ — пауза.</p>
       <button id="dailyBonusBtn" class="hidden"></button>
       <button id="playBtn">Играть</button>
+      <!-- Требования площадки, п.6.1: адрес для обратной связи. -->
+      <p id="menuFeedback">Связь с разработчиком: <a href="mailto:qwerty04072000@gmail.com">qwerty04072000@gmail.com</a></p>
     </div>
   </div>
 

@@ -895,7 +895,35 @@
     }
   }
 
+  // Требования площадки, п.1.6.1.1/1.6.3.1: доступен полноэкранный режим.
+  // Кнопка показывается только если API реально доступен (feature-detect —
+  // некоторые встраиваемые iframe без allow="fullscreen" его не дают, тест-
+  // окружения Playwright тоже иногда без него): скрытая кнопка лучше
+  // мёртвой. Вызов — try/catch: браузер может отклонить запрос вне жеста
+  // пользователя или в кросс-origin iframe без разрешения, это не баг игры.
+  function fullscreenSupported() {
+    var el = document.documentElement;
+    return !!(el.requestFullscreen || el.webkitRequestFullscreen) &&
+      !!(document.exitFullscreen || document.webkitExitFullscreen);
+  }
+  function toggleFullscreen() {
+    try {
+      var isFs = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!isFs) {
+        var el = document.documentElement;
+        (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      }
+    } catch (e) { /* платформа отклонила — тихо, кнопка не роняет игру */ }
+  }
+
   function wireInput() {
+    var fsBtn = document.getElementById('fullscreenBtn');
+    if (fullscreenSupported()) {
+      fsBtn.classList.remove('hidden');
+      fsBtn.onclick = toggleFullscreen;
+    }
     speedBtnEl.onclick = function () {
       speedIndex = (speedIndex + 1) % battleBalance.speed_levels.length;
       updateSpeedButton();
