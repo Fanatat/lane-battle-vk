@@ -514,6 +514,55 @@
     ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
     ctx.stroke();
     ctx.globalAlpha = 1;
+
+    // п.33а: голая дуга читалась как отладочная линия — по обоим концам
+    // локального сектора ставится флажок-маркер (характерные точки границы),
+    // флаг «развевается» внутрь полосы (знак направления по side.fill/PI).
+    var flagDir = Math.cos(facingAngle) >= 0 ? 1 : -1;
+    var edgeAngleA = facingAngle - ARC_HALF;
+    var edgeAngleB = facingAngle + ARC_HALF;
+    drawBaseDefenseFlag(
+      frontX + rangePx * Math.cos(edgeAngleA),
+      layout.laneY + rangePx * Math.sin(edgeAngleA),
+      side, flagDir, flashFrac
+    );
+    drawBaseDefenseFlag(
+      frontX + rangePx * Math.cos(edgeAngleB),
+      layout.laneY + rangePx * Math.sin(edgeAngleB),
+      side, flagDir, flashFrac
+    );
+  }
+
+  // Флажок-маркер границы дальности базовой обороны: вертикальный флагшток
+  // с треугольным полотнищем, поставленный в характерной точке дуги —
+  // декоративный плейсхолдер вместо голой геометрии (п.33а общего плана).
+  // Все размеры — доли layout.unitSize из balance.json (base_defense_marker).
+  function drawBaseDefenseFlag(x, y, side, flagDir, flashFrac) {
+    var m = battleBalance.base_defense_marker;
+    if (!m) return;
+    var size = layout.unitSize;
+    var poleH = size * m.pole_h_uw;
+    var flagW = size * m.flag_w_uw * flagDir;
+    var flagH = size * m.flag_h_uw;
+    var topY = y - poleH;
+    ctx.globalAlpha = m.alpha + flashFrac * m.flash_alpha_boost;
+    // Флагшток — тем же тёмным нейтральным цветом, что подложка HP-бара
+    // (drawUnitHpBar), а не side.text: у игрока side.text тёмный и виден на
+    // бумажном фоне, у врага светлый и на бумаге сливался бы в невидимку.
+    ctx.strokeStyle = '#3a2c1c';
+    ctx.lineWidth = Math.max(1, size * m.pole_w_uw);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, topY);
+    ctx.stroke();
+    ctx.fillStyle = side.fill;
+    ctx.beginPath();
+    ctx.moveTo(x, topY);
+    ctx.lineTo(x + flagW, topY + flagH * 0.5);
+    ctx.lineTo(x, topY + flagH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   // Превью следующей волны (фаза 2 ТЗ №05): те же силуэты, что у юнитов на
