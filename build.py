@@ -26,6 +26,7 @@ GAME_ID — рабочий внутренний идентификатор дл�
 выводится, N-15 — нейминг на фазе 12 решением основателя; здесь — только
 имя файла на диске, не игровой текст).
 """
+import datetime
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,10 @@ def git_hash():
         return subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, text=True).strip()
     except Exception:
         return 'nogit'
+
+
+def build_date():
+    return datetime.date.today().strftime('%Y%m%d')
 
 
 def next_build_number(platform):
@@ -133,7 +138,13 @@ def build_yandex():
     shutil.copy2(ROOT / 'platform.js', build_dir / 'platform.js')
 
     n = next_build_number('yandex')
-    build_id = f'yandex-b{n}-{git_hash()}'
+    # G-07 (правка 2026-09-03, Color Sort/п.3.5): плашка BUILD видна ИГРОКУ
+    # внутри самой игры (buildBadgeEl.textContent = Platform.BUILD) — имя
+    # площадки в неё не пишем (было 'yandex-b{n}-{hash}', литеральный
+    # бренд третьей стороны на экране продукта). Имя площадки остаётся
+    # только в имени файла архива ниже (zip_path) — его видит разработчик,
+    # не игрок/модератор.
+    build_id = f'b{n}-{git_hash()}-{build_date()}'
 
     platform_src = (build_dir / 'platform.js').read_text(encoding='utf-8')
     if YANDEX_PLACEHOLDER not in platform_src:
@@ -181,7 +192,8 @@ def build_vk():
     shutil.copy2(ROOT / 'vendor' / 'vk-bridge.min.js', build_dir / 'vk-bridge.min.js')
 
     n = next_build_number('vk')
-    build_id = f'vk-b{n}-{git_hash()}'
+    # G-07: см. комментарий у build_yandex() — тот же формат без имени площадки.
+    build_id = f'b{n}-{git_hash()}-{build_date()}'
 
     platform_src = (build_dir / 'vk_platform.js').read_text(encoding='utf-8')
     if VK_PLACEHOLDER not in platform_src:
