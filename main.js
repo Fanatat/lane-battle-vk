@@ -40,30 +40,28 @@
   // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
   // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
   // министично, без дрейфа), замах — от cooldown относительно attack_speed.
-  // ТЗ №22 п.3: u.advancing флиппается по нескольку раз в секунду В ОЧЕРЕДИ
-  // (несколько юнитов своей стороны, gap-клэмп очереди) — проверено node-
-  // прогоном движка: 1v1 переход true→false ровно один раз (чисто), но в
-  // очереди из 3+ юнитов — десятки флипов за бой. Без сглаживания рендер
-  // ежекадрово прыгал walk↔attack, фаза замаха (cooldown-based t) обнулялась
-  // так часто, что видимый удар почти никогда не доигрывал — совпадает с
-  // жалобой «замаха нет визуально, хотя урон есть». Чистая рендер-задержка
-  // (main.js, не трогает engine.js/баланс): once advancing=true, держим
-  // walk-режим ещё ATTACK_WALK_GRACE_S реального игрового времени после
-  // последнего true — гасит дребезг, не отменяет сам факт "юнит ещё не
-  // дошёл до истинного contactRange" (advancing НЕ становится false раньше
-  // срока, только НЕ откатывается сразу обратно в walk при кратком true).
-  var ATTACK_WALK_GRACE_S = 0.35;
-
+  // ТЗ №23: задние ряды очереди бьют с расширенного радиуса (engine.js
+  // meleeRange, front_depth — намеренная механика фронта ТЗ №05 1.1, НЕ
+  // трогаем, урон реально наносится по кулдауну независимо от того, дошёл
+  // ли юнит до contactRange) — ТЗ №21/22 решали это переключением ВСЕЙ
+  // фигуры walk↔attack (и сглаживанием флика через грейс-таймер), но один
+  // anim.mode на всё тело не может одновременно показать «юнит ещё
+  // физически идёт» (ноги) И «удар уже происходит синхронно с уроном»
+  // (рука+оружие) — rig.js теперь принимает их РАЗДЕЛЬНО (anim.armMode/
+  // anim.armT, см. computeRig). Ноги — 'walk', пока u.advancing (юнит
+  // правда движется); рука+оружие — 'attack' ВСЕГДА, когда state='ATTACK'
+  // (замах синхронен с u.cooldown — с реальным моментом урона, а не с тем,
+  // остановились ли ноги). Грейс-таймер ТЗ №22 для этого больше не нужен —
+  // рука не переключается обратно в 'walk' вовсе, пока идёт бой, флику
+  // нечего сбрасывать.
   function unitAnim(u, spec, isPlayer) {
-    if (u.state === 'ATTACK' && u.advancing) {
-      u._attackWalkGraceUntil = frameTimeElapsed + ATTACK_WALK_GRACE_S;
-    }
-    if (u.state === 'ATTACK' && (u.advancing || (u._attackWalkGraceUntil && frameTimeElapsed < u._attackWalkGraceUntil))) {
-      return { mode: 'walk', t: isPlayer ? u.x : -u.x };
-    }
     if (u.state === 'ATTACK' || u.state === 'SIEGE') {
       var speed = spec.attack_speed > 0 ? spec.attack_speed : 1;
-      return { mode: 'attack', t: 1 - Math.max(0, Math.min(1, u.cooldown / speed)) };
+      var armT = 1 - Math.max(0, Math.min(1, u.cooldown / speed));
+      if (u.state === 'ATTACK' && u.advancing) {
+        return { mode: 'walk', t: isPlayer ? u.x : -u.x, armMode: 'attack', armT: armT };
+      }
+      return { mode: 'attack', t: armT };
     }
     if (u.state === 'MOVE') {
       // ТЗ №21 (QA-баг 1): фаза шага раньше читалась прямо из u.x — у

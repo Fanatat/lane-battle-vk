@@ -106,6 +106,24 @@
     var leanAngle = 0;
     var legTargetA, legTargetB, armTargetA, armTargetB;
 
+    // ТЗ №23: ноги и рука+оружие МОГУТ анимироваться разными фазами —
+    // задние ряды очереди (engine.js u.advancing, ТЗ №21/22) физически
+    // ещё идут к contactRange, но УЖЕ бьют по кулдауну на расширенном
+    // радиусе meleeRange (намеренная механика фронта, ТЗ №05 1.1 —
+    // front_depth юнитов очереди одновременно достают до контакта, не
+    // трогаем). Раньше вся фигура рисовалась ЛИБО ходьбой (ноги живые, но
+    // взмаха не видно синхронно с уроном), ЛИБО замахом (взмах виден, но
+    // ноги стоят под скользящим юнитом) — один anim.mode на всё тело не
+    // мог показать оба факта разом. anim.armMode/anim.armT (опционально,
+    // по умолчанию = anim.mode/anim.t — 100% обратная совместимость со
+    // всеми существующими вызовами/тестами) отвязывают руку+оружие от
+    // ног: main.js теперь может отдать ноги под 'walk' (юнит правда
+    // движется), а руку — под 'attack' (взмах синхронен с реальным
+    // моментом урона, cooldown-based t), не трогая радиус/баланс в
+    // engine.js вовсе.
+    var armMode = anim.armMode || anim.mode;
+    var armT = (anim.armT !== undefined) ? anim.armT : anim.t;
+
     if (anim.mode === 'walk') {
       leanAngle = 0.13; // фиксированный наклон корпуса вперёд на ходу (ТЗ17)
       var freq = 0.9, phase = anim.t * freq;
@@ -114,21 +132,15 @@
       var liftB = Math.max(0, Math.cos(phase + Math.PI)) * maxLift;
       legTargetA = { x: hipX + sA * stride, y: feetY - liftA };
       legTargetB = { x: hipX + sB * stride, y: feetY - liftB };
-      armTargetA = { x: hipX + sB * armStride, y: null }; // контралатерально ноге
-      armTargetB = { x: hipX + sA * armStride, y: null };
     } else if (anim.mode === 'attack') {
-      var t = Math.max(0, Math.min(1, anim.t));
-      var swing = Math.sin(t * Math.PI);
-      leanAngle = swing * 0.16;
+      var legT = Math.max(0, Math.min(1, anim.t));
+      var legSwing = Math.sin(legT * Math.PI);
+      leanAngle = legSwing * 0.16;
       legTargetA = { x: hipX - stance, y: feetY };
       legTargetB = { x: hipX + stance, y: feetY };
-      armTargetA = { x: hipX - stance * 1.4, y: null };
-      armTargetB = { x: hipX + stance * 1.4, y: null };
     } else {
       legTargetA = { x: hipX - stance, y: feetY - maxLift * 0.10 };
       legTargetB = { x: hipX + stance, y: feetY - maxLift * 0.10 };
-      armTargetA = { x: hipX - stance * 1.2 + idleSway * 0.6, y: null };
-      armTargetB = { x: hipX + stance * 1.2 - idleSway * 0.6, y: null };
     }
 
     var shoulderX = hipX + Math.sin(leanAngle) * torsoLen;
@@ -136,6 +148,18 @@
     var headCx = shoulderX + Math.sin(leanAngle) * (neckGap + headR);
     var headCy = shoulderY - Math.cos(leanAngle) * (neckGap + headR);
 
+    if (armMode === 'walk') {
+      var freqW = 0.9, phaseW = armT * freqW;
+      var sAw = Math.sin(phaseW), sBw = Math.sin(phaseW + Math.PI);
+      armTargetA = { x: hipX + sBw * armStride, y: null }; // контралатерально ноге
+      armTargetB = { x: hipX + sAw * armStride, y: null };
+    } else if (armMode === 'attack') {
+      armTargetA = { x: hipX - stance * 1.4, y: null };
+      armTargetB = { x: hipX + stance * 1.4, y: null };
+    } else {
+      armTargetA = { x: hipX - stance * 1.2 + idleSway * 0.6, y: null };
+      armTargetB = { x: hipX + stance * 1.2 - idleSway * 0.6, y: null };
+    }
     armTargetA.y = shoulderY + armLen * 0.82;
     armTargetB.y = shoulderY + armLen * 0.82;
 
@@ -153,12 +177,12 @@
     // (критерий 8).
     var WEAPON_REST = 0.45;
     var weaponAngle;
-    if (anim.mode === 'attack') {
-      weaponAngle = WEAPON_REST + (Math.sin(Math.max(0, Math.min(1, anim.t)) * Math.PI)) * 1.05;
-    } else if (anim.mode === 'walk') {
-      weaponAngle = WEAPON_REST + Math.sin(anim.t * 0.9) * 0.12;
+    if (armMode === 'attack') {
+      weaponAngle = WEAPON_REST + (Math.sin(Math.max(0, Math.min(1, armT)) * Math.PI)) * 1.05;
+    } else if (armMode === 'walk') {
+      weaponAngle = WEAPON_REST + Math.sin(armT * 0.9) * 0.12;
     } else {
-      weaponAngle = WEAPON_REST + Math.sin(anim.t * 2.1) * 0.08;
+      weaponAngle = WEAPON_REST + Math.sin(armT * 2.1) * 0.08;
     }
     var weaponLen = figH * 0.38; // ТЗ16 п.2.1: оружие держится у плеча
 
