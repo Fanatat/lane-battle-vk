@@ -40,13 +40,27 @@
   // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
   // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
   // министично, без дрейфа), замах — от cooldown относительно attack_speed.
-  function unitAnim(u, spec) {
+  function unitAnim(u, spec, isPlayer) {
+    // ТЗ №21 (QA-баг 4): задние ряды бьют с расширенного радиуса, ещё
+    // физически доходя до contactRange (engine.js, u.advancing) — раньше
+    // это всегда рендерилось как ATTACK-поза, ноги замирали, юнит скользил
+    // под неподвижными ногами. Пока реально движется — играем ходьбу, не
+    // застывший замах; сам замах начнётся, когда дойдёт и остановится.
+    if (u.state === 'ATTACK' && u.advancing) {
+      return { mode: 'walk', t: isPlayer ? u.x : -u.x };
+    }
     if (u.state === 'ATTACK' || u.state === 'SIEGE') {
       var speed = spec.attack_speed > 0 ? spec.attack_speed : 1;
       return { mode: 'attack', t: 1 - Math.max(0, Math.min(1, u.cooldown / speed)) };
     }
     if (u.state === 'MOVE') {
-      return { mode: 'walk', t: u.x };
+      // ТЗ №21 (QA-баг 1): фаза шага раньше читалась прямо из u.x — у
+      // игрока x растёт вперёд по бою, у врага, наоборот, УБЫВАЕТ (engine.js
+      // dir = isPlayer?1:-1) — фаза шла назад во времени, походка враг
+      // выглядела так, будто идёт задом наперёд (не то же самое, что
+      // зеркалирование отрисовки ТЗ №20 — то отражает геометрию в
+      // пространстве, это чинит направление течения фазы во времени).
+      return { mode: 'walk', t: isPlayer ? u.x : -u.x };
     }
     return { mode: 'idle', t: frameTimeElapsed };
   }
@@ -605,7 +619,7 @@
     var x = sx - w / 2;
     var groundY = u.y + size / 2; // fixed baseline: unit grows upward from the lane as it squashes
     var y = groundY - h;
-    var anim = unitAnim(u, spec);
+    var anim = unitAnim(u, spec, isPlayer);
 
     // Заливка кодирует сторону (чья), rig+пропы — роль (какую). Ни одной
     // буквы на поле (ТЗ №13, блок 2, перенесено в ТЗ №15) — силуэт из

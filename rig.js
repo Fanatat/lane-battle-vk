@@ -161,14 +161,27 @@
       weaponAngle = WEAPON_REST + Math.sin(anim.t * 2.1) * 0.08;
     }
     var weaponLen = figH * 0.38; // ТЗ16 п.2.1: оружие держится у плеча
-    var weaponSideOffset = figH * 0.09 * m.limbScale;
+    // ТЗ №21 (QA-баг 2): было pivotY = shoulderY-0.02*figH — ВЫШЕ подбородка
+    // (headCy+headR ≈ shoulderY-0.03*figH при lean=0) — навершие визуально
+    // садилось прямо на челюсть. +0.05 вниз от плеча даёт запас по вертикали;
+    // 0.09→0.13 горизонтали доводит видимый зазор от головы до чистого во
+    // всех позах (idle/walk/attack — лин раскачивает плечо/голову). Первая
+    // попытка (0.20) визуально была чище, но раздула силуэт роли A по
+    // ширине настолько, что просел критерий 3 читаемости (различимость
+    // габаритов ролей, tests/readability_check.py, порог ≥25% — при 0.20
+    // было 19%); измерено сканом (240×240, тот же канвас, что у теста):
+    // 0.09→108px, 0.13→116px, 0.15→120px, 0.17→124px ширины при пороге
+    // ≤121.5px (роль B неизменна, 162px) — 0.13 даёт запас ~5.5px, не впритык.
+    var weaponSideOffset = figH * 0.13 * m.limbScale;
+    var weaponPivotYOffset = figH * 0.05;
 
     var helmetTopY = headCy - headR * 1.95;
-    var weaponTopY = shoulderY - weaponLen - figH * 0.03;
+    var weaponTopY = shoulderY + weaponPivotYOffset - weaponLen - figH * 0.03;
 
     return {
       m: m, cx: hipX, feetY: feetY, figH: figH, figW: w * m.wScale,
       weaponLen: weaponLen, weaponAngle: weaponAngle, weaponSideOffset: weaponSideOffset,
+      weaponPivotYOffset: weaponPivotYOffset,
       // bodyBarW — ширина HP-бара юнита: доля figW (уже несёт разницу ролей
       // по wScale/limbScale), не привязана к разносу плеч (торс теперь без
       // ширины — единая линия, ТЗ17).
@@ -287,7 +300,7 @@
   // отдельно анимируется rig.weaponAngle (0 = прямо вверх).
   function drawMeleeWeapon(ctx, rig, accentColor) {
     var pivotX = rig.shoulderX + rig.weaponSideOffset;
-    var pivotY = rig.shoulderY - rig.figH * 0.02;
+    var pivotY = rig.shoulderY + rig.weaponPivotYOffset;
     var angle = -Math.PI / 2 + rig.weaponAngle;
     var tipX = pivotX + Math.cos(angle) * rig.weaponLen;
     var tipY = pivotY + Math.sin(angle) * rig.weaponLen;
@@ -317,7 +330,12 @@
 
   // лук стрелка — дуга у кисти, выступающая вбок от тела (не полукруг через
   // всю фигуру). Размер ≥40% роста фигуры (п.2.2).
-  function drawBow(ctx, rig, hand, strokeStyle, lineWidth) {
+  // ТЗ №21 (QA-баг 3, "тот же класс, что меч"): дуга лука раньше рисовалась
+  // отдельно от тела, без метки хвата — читалась как повисшая рядом
+  // фигура, не как оружие В РУКЕ. Кисть (armR) уже физически в правильном
+  // месте (в отличие от меча, лук не имел проблемы с пивотом), не хватало
+  // только точки хвата — тот же приём, что навершие рукояти меча.
+  function drawBow(ctx, rig, hand, strokeStyle, lineWidth, accentColor) {
     var bowR = rig.figH * 0.34;
     var half = 0.78; // рад, ~45° в каждую сторону от направления кисти
     var ccx = hand.hx, ccy = hand.hy;
@@ -335,6 +353,12 @@
     ctx.lineTo(ccx - bowR * 0.15, ccy);
     ctx.lineTo(botX, botY);
     ctx.stroke();
+    // точка хвата — акцент стороны, у самой кисти (тот же приём, что
+    // навершие рукояти меча) — читается как рука, держащая лук.
+    ctx.beginPath();
+    addEllipse(ctx, ccx, ccy, rig.figH * 0.04, rig.figH * 0.04);
+    ctx.fillStyle = accentColor;
+    ctx.fill();
   }
 
   // щит — крупный, ПЕРЕД корпусом, заметно выступает за силуэт тела с обеих
@@ -375,7 +399,7 @@
 
   function drawProps(ctx, shape, isPlayer, rig, fillStyle, strokeStyle, lineWidth) {
     if (shape === 'spike') {
-      drawBow(ctx, rig, rig.armR, INK, lineWidth);
+      drawBow(ctx, rig, rig.armR, INK, lineWidth, fillStyle);
     } else {
       drawMeleeWeapon(ctx, rig, fillStyle);
     }

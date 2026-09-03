@@ -29,7 +29,7 @@
     for (var i = 0; i < size; i++) {
       arr[i] = {
         active: false, type: null, x: 0, y: 0, hp: 0, maxHp: 0,
-        cooldown: 0, state: 'MOVE', squashT: 0, flashT: 0
+        cooldown: 0, state: 'MOVE', squashT: 0, flashT: 0, advancing: false
       };
     }
     return arr;
@@ -253,6 +253,7 @@
       slot.state = 'MOVE';
       slot.squashT = balance.juice.spawn_squash_ms / 1000;
       slot.flashT = 0;
+      slot.advancing = false;
       if (isPlayer) {
         state.spawnedCount++;
         if (state.spawnedByType[type] !== undefined) state.spawnedByType[type]++;
@@ -434,6 +435,13 @@
         var spec = balance.units[u.type];
         var uStats = getUnitStats(u.type, isPlayer); // ТЗ №08: аддитивный урон-бонус игрока
         if (u.cooldown > 0) u.cooldown -= dt;
+        // ТЗ №21 (QA-баг 4): по умолчанию не движется физически этот тик —
+        // ниже переставляется в true ТОЛЬКО в ветке, где u.x реально
+        // меняется, пока state остаётся ATTACK (задние ряды бьют с
+        // расширенного радиуса и одновременно доходят до contactRange).
+        // Рендер (main.js unitAnim) читает этот флаг, чтобы не замораживать
+        // ходьбу под скользящими ногами — движковую логику не трогает.
+        u.advancing = false;
 
         // Осада — безусловный приоритет: юнит в радиусе осады бьёт по базе,
         // даже если рядом враг (иначе бой у самой базы стопорит осаду навечно).
@@ -486,6 +494,10 @@
               if (isPlayer) ax = Math.min(ax, ahead.x - gap);
               else ax = Math.max(ax, ahead.x + gap);
             }
+            // advancing только если реально сдвинулся — очередь может
+            // клэмпить ax обратно в u.x (упёрся в союзника впереди), тогда
+            // юнит физически стоит и ATTACK-поза (не ходьба) верна.
+            if (ax !== u.x) u.advancing = true;
             u.x = ax;
           }
           continue;
