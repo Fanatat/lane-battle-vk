@@ -43,7 +43,7 @@ GAME_ID = 'lanebattler'
 # файлы. Список НЕ "всё, кроме запрещённого" (белый список, не чёрный) —
 # каждый новый игровой файл нужно явно сюда добавить (то же требование
 # K-15 "ревизия всех экранов при изменении масштаба", применённое к сборке).
-WHITELIST_COMMON = ['index.html', 'engine.js', 'rig.js', 'campaign.js', 'main.js', 'balance.json']
+WHITELIST_COMMON = ['index.html', 'engine.js', 'rig.js', 'campaign.js', 'main.js', 'balance.json', 'i18n.js']
 
 YANDEX_PLACEHOLDER = '__YANDEX_BUILD__'
 VK_PLACEHOLDER = '__VK_BUILD__'

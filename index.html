@@ -176,9 +176,9 @@
     <canvas id="game"></canvas>
 
     <div id="cards">
-      <div class="card disabled" id="card-A"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Боец</div><div class="cost">—</div></div>
-      <div class="card disabled" id="card-B"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Стрелок</div><div class="cost">—</div></div>
-      <div class="card disabled" id="card-C"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel">Щит</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-A"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleA">Боец</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-B"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleB">Стрелок</div><div class="cost">—</div></div>
+      <div class="card disabled" id="card-C"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleC">Щит</div><div class="cost">—</div></div>
     </div>
   </div>
 
@@ -188,30 +188,33 @@
        нет. Прежнее имя «Муравьиная война» (ТЗ №13) снято вместе с темой. -->
   <div id="menuScreen" class="hidden">
     <div id="menuBox">
-      <h1 id="menuTitle">Битва линий</h1>
+      <h1 id="menuTitle" data-i18n="title">Битва линий</h1>
       <div id="menuBadges">
         <canvas id="menuIconA" width="46" height="46"></canvas>
         <canvas id="menuIconB" width="46" height="46"></canvas>
         <canvas id="menuIconC" width="46" height="46"></canvas>
       </div>
-      <p id="menuSubtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
+      <p id="menuSubtitle" data-i18n="subtitle">Копи еду — выставляй бойцов — разноси базу врага</p>
       <!-- Требования площадки, п.2.2: полное описание управления в игре.
            Одна строка, без отдельного туториал-экрана (CLAUDE.md границы) —
            три касания дают всё управление: карточка спавнит юнита, кнопка
            скорости листает ×1/×2/×3, пауза сверху. -->
-      <p id="menuHowToPlay">Тапни по карточке юнита внизу — он выйдет на полосу и будет сражаться сам. Кнопка ×1 наверху ускоряет бой, ⏸ — пауза.</p>
+      <p id="menuHowToPlay" data-i18n="howToPlay">Тапни по карточке юнита внизу — он выйдет на полосу и будет сражаться сам. Кнопка ×1 наверху ускоряет бой, ⏸ — пауза.</p>
       <button id="dailyBonusBtn" class="hidden"></button>
       <button id="playBtn">Играть</button>
-      <!-- Требования площадки, п.6.1: адрес для обратной связи. -->
-      <p id="menuFeedback">Связь с разработчиком: <a href="mailto:qwerty04072000@gmail.com">qwerty04072000@gmail.com</a></p>
+      <!-- Требования площадки, п.6.1: адрес для обратной связи. ТЗ №19:
+           только префикс переводится через data-i18n на <span> — mailto
+           остаётся вне applyStrings(), иначе textContent всей <p> стёр бы
+           дочернюю ссылку. -->
+      <p id="menuFeedback"><span data-i18n="feedbackPrefix">Связь с разработчиком:</span> <a href="mailto:qwerty04072000@gmail.com">qwerty04072000@gmail.com</a></p>
     </div>
   </div>
 
   <div id="pauseScreen" class="hidden">
     <div id="pauseBox">
-      <h1 id="pauseTitle">Пауза</h1>
-      <button id="pauseResumeBtn">Продолжить</button>
-      <div><button id="pauseMenuBtn">Выйти в меню</button></div>
+      <h1 id="pauseTitle" data-i18n="pauseTitle">Пауза</h1>
+      <button id="pauseResumeBtn" data-i18n="continueLabel">Продолжить</button>
+      <div><button id="pauseMenuBtn" data-i18n="pauseMenu">Выйти в меню</button></div>
     </div>
   </div>
 
@@ -234,6 +237,7 @@
        updateBuildBadge(). На локальном запуске без сборки — не видна. -->
   <div id="buildBadge" class="hidden"></div>
 
+  <script src="i18n.js"></script>
   <script src="platform.js"></script>
   <script src="rig.js"></script>
   <script src="engine.js"></script>

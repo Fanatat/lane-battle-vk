@@ -94,10 +94,11 @@
       // первый же persist() полным объектом стёр бы реальный прогресс
       // на сбое сети при старте (S-03: сейв пишется всегда целиком).
       await Platform.init();
-      // ТЗ №18 (п.2.14 площадки): lang обязан отражать реально определённый
-      // SDK-язык, не статичную строку из index.html — контент по-прежнему
-      // RU-only, перевод текста тут не делается.
-      document.documentElement.lang = Platform.getLang();
+      // ТЗ №19 (повторный отказ п.2.14 — ТЗ №18 меняло только невидимый
+      // атрибут lang, площадка требует РЕАЛЬНО видимую смену языка):
+      // setLanguage() переключает словарь I18N и применяет его ко всем
+      // [data-i18n]-элементам (i18n.js, эталон game3/color_sort).
+      setLanguage(Platform.getLang());
       var loadResult = await Platform.load();
       if (loadResult.ok) {
         campaignState = window.LaneCampaign.migrateSave(loadResult.data);
@@ -106,6 +107,11 @@
         console.error('[save] load() не удался при старте — играем на дефолтах, запись сейва отключена', loadResult.error);
         campaignState = window.LaneCampaign.freshCampaignState();
       }
+      // ТЗ №19: топ-бар («Битва N») — статичный текст из index.html до
+      // первого боя, applyStrings() его не трогает (число нужно). Без
+      // этого вызова заголовок остаётся русским на EN до старта первой
+      // битвы — обновляем сразу, как только язык и campaignState известны.
+      updateCampaignHud();
       showMenu();
       Platform.gameReady();
       updateBuildBadge();
@@ -203,7 +209,7 @@
   // что-то восстановил) кнопка честно говорит «Продолжить».
   function showMenu() {
     var playBtnEl = document.getElementById('playBtn');
-    if (playBtnEl) playBtnEl.textContent = campaignState && campaignState.battleNumber > 1 ? 'Продолжить' : 'Играть';
+    if (playBtnEl) playBtnEl.textContent = campaignState && campaignState.battleNumber > 1 ? t('continueLabel') : t('play');
     updateDailyBonusButton();
     menuScreenEl.classList.remove('hidden');
   }
@@ -217,8 +223,10 @@
       btn.classList.add('hidden');
       return;
     }
-    btn.textContent = '🔥 Серия ' + (campaignState.dailyStreak + 1) + ' — забрать ' +
-      baseBalance.campaign.currency_icon + ' ' + baseBalance.campaign.daily.bonus_trophies;
+    btn.textContent = t('dailyBonus')
+      .replace('{n}', campaignState.dailyStreak + 1)
+      .replace('{icon}', baseBalance.campaign.currency_icon)
+      .replace('{m}', baseBalance.campaign.daily.bonus_trophies);
     btn.classList.remove('hidden');
     btn.onclick = function () {
       var gained = window.LaneCampaign.claimDaily(baseBalance.campaign, campaignState, Platform.now());
@@ -394,8 +402,8 @@
     // силуэтов, вне зоны HP-баров/подписей баз (те начинаются заметно ниже).
     window.Rig.drawTopBanner(ctx, layout.w, layout.unitSize * 0.12, layout.unitSize * 0.14, 'rgba(183,164,126,0.6)', '#ddccaa');
 
-    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, 'ИГРОК', 'left', true);
-    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, 'ВРАГ', 'right', false);
+    drawBase(layout.playerBase, state.playerBaseHp, state.playerBaseMaxHp, battleBalance.sides.player, t('player'), 'left', true);
+    drawBase(layout.enemyBase, state.enemyBaseHp, state.enemyBaseMaxHp, battleBalance.sides.enemy, t('enemy'), 'right', false);
     drawLastStand();
     drawWavePreview(state);
 
@@ -567,7 +575,7 @@
     ctx.font = 'bold ' + Math.round(size * p.font_scale_timer) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(secondsLeft + 'с', cx, cy + iconSize / 2 + size * 0.08);
+    ctx.fillText(secondsLeft + t('secShort'), cx, cy + iconSize / 2 + size * 0.08);
   }
 
   function drawUnit(u, side, isPlayer) {
@@ -706,7 +714,7 @@
   }
 
   function updateCampaignHud() {
-    battleLabelEl.textContent = 'Битва ' + campaignState.battleNumber;
+    battleLabelEl.textContent = t('battleLabel').replace('{n}', campaignState.battleNumber);
     trophyValueEl.textContent = campaignState.trophies;
   }
 
@@ -795,18 +803,18 @@
     updateCampaignHud();
     persist();
 
-    popupTitleEl.textContent = won ? 'Победа' : 'Поражение';
+    popupTitleEl.textContent = won ? t('win') : t('lose');
     var seconds = state.timeElapsed.toFixed(1);
     popupStatsEl.textContent =
-      (reachedMilestone ? '🎉 Рубеж: битва ' + campaignState.battleNumber + ' позади. Дальше сложнее.\n\n' : '') +
-      'Битва ' + campaignState.battleNumber + '\n' +
-      'Длительность боя: ' + seconds + ' с\n' +
-      'Юнитов заспавнено: ' + state.spawnedCount + '\n' +
-      'Юнитов убито: ' + state.killedCount + '\n' +
-      'Получено ' + baseBalance.campaign.currency_icon + ' ' + gained + ' (всего ' + campaignState.trophies + ')';
+      (reachedMilestone ? t('milestoneLine').replace('{n}', campaignState.battleNumber) : '') +
+      t('battleLabel').replace('{n}', campaignState.battleNumber) + '\n' +
+      t('statsDuration').replace('{s}', seconds) + '\n' +
+      t('statsSpawned').replace('{n}', state.spawnedCount) + '\n' +
+      t('statsKilled').replace('{n}', state.killedCount) + '\n' +
+      t('statsGained').replace('{icon}', baseBalance.campaign.currency_icon).replace('{n}', gained).replace('{total}', campaignState.trophies);
     setupRewardedBonusButton(gained);
     buildUpgradeShop();
-    restartBtnEl.textContent = 'Начать битву ' + (campaignState.battleNumber + 1);
+    restartBtnEl.textContent = t('restartNext').replace('{n}', campaignState.battleNumber + 1);
     popupEl.classList.remove('hidden');
   }
 
@@ -818,7 +826,7 @@
   function setupRewardedBonusButton(baseGained) {
     var btn = document.getElementById('rewardedBonusBtn');
     var bonus = Math.round(baseGained * baseBalance.campaign.ads.rewarded_bonus_fraction);
-    btn.textContent = '🏆 Бонус за просмотр рекламы: +' + bonus;
+    btn.textContent = t('rewardedBonus').replace('{n}', bonus);
     btn.classList.remove('hidden');
     btn.disabled = false;
     btn.onclick = function () {
@@ -827,7 +835,7 @@
         campaignState.trophies += bonus;
         updateCampaignHud();
         persist();
-        btn.textContent = 'Начислено +' + bonus + ' ' + baseBalance.campaign.currency_icon;
+        btn.textContent = t('rewardedGranted').replace('{n}', bonus).replace('{icon}', baseBalance.campaign.currency_icon);
         btn.classList.add('hidden');
       }, null, null);
     };
@@ -845,8 +853,11 @@
     var campaign = baseBalance.campaign;
     upgradeShopEl.innerHTML = '';
 
+    // ТЗ №19: def.label — русский текст из balance.json (структуру не
+    // трогаем), для отображения берём перевод из i18n.js по тому же ключу
+    // ('upg_' + key), не из JSON — RU-рендер byte-идентичен прежнему.
     var unlockHeader = document.createElement('h2');
-    unlockHeader.textContent = 'Разблокировки';
+    unlockHeader.textContent = t('unlocksHeader');
     upgradeShopEl.appendChild(unlockHeader);
     Object.keys(campaign.unlocks).forEach(function (key) {
       if (campaignState.unlocked[key]) return;
@@ -854,13 +865,13 @@
       var canBuy = window.LaneCampaign.canBuyUnlock(campaign, key, campaignState);
       var locked = def.requires && !campaignState.unlocked[def.requires];
       upgradeShopEl.appendChild(buildShopRow(
-        def.label, locked ? 'нужно: ' + campaign.unlocks[def.requires].label : '',
+        t('upg_' + key), locked ? t('needsUnlock').replace('{label}', t('upg_' + def.requires)) : '',
         def.cost, canBuy, function () { buyAndRefresh(function () { return window.LaneCampaign.buyUnlock(campaign, key, campaignState); }); }
       ));
     });
 
     var upgHeader = document.createElement('h2');
-    upgHeader.textContent = 'Апгрейды';
+    upgHeader.textContent = t('upgradesHeader');
     upgradeShopEl.appendChild(upgHeader);
     Object.keys(campaign.upgrades).forEach(function (key) {
       var def = campaign.upgrades[key];
@@ -871,7 +882,7 @@
       var maxed = cost === null;
       var canBuy = !maxed && window.LaneCampaign.canBuyUpgrade(campaign, key, campaignState);
       upgradeShopEl.appendChild(buildShopRow(
-        def.label, 'уровень ' + level + (maxed ? ' (макс.)' : ''),
+        t('upg_' + key), t('upgradeLevel').replace('{n}', level) + (maxed ? t('maxedSuffix') : ''),
         maxed ? null : cost, canBuy, function () { buyAndRefresh(function () { return window.LaneCampaign.buyUpgrade(campaign, key, campaignState); }); }
       ));
     });
