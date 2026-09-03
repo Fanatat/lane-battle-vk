@@ -40,13 +40,25 @@
   // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
   // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
   // министично, без дрейфа), замах — от cooldown относительно attack_speed.
+  // ТЗ №22 п.3: u.advancing флиппается по нескольку раз в секунду В ОЧЕРЕДИ
+  // (несколько юнитов своей стороны, gap-клэмп очереди) — проверено node-
+  // прогоном движка: 1v1 переход true→false ровно один раз (чисто), но в
+  // очереди из 3+ юнитов — десятки флипов за бой. Без сглаживания рендер
+  // ежекадрово прыгал walk↔attack, фаза замаха (cooldown-based t) обнулялась
+  // так часто, что видимый удар почти никогда не доигрывал — совпадает с
+  // жалобой «замаха нет визуально, хотя урон есть». Чистая рендер-задержка
+  // (main.js, не трогает engine.js/баланс): once advancing=true, держим
+  // walk-режим ещё ATTACK_WALK_GRACE_S реального игрового времени после
+  // последнего true — гасит дребезг, не отменяет сам факт "юнит ещё не
+  // дошёл до истинного contactRange" (advancing НЕ становится false раньше
+  // срока, только НЕ откатывается сразу обратно в walk при кратком true).
+  var ATTACK_WALK_GRACE_S = 0.35;
+
   function unitAnim(u, spec, isPlayer) {
-    // ТЗ №21 (QA-баг 4): задние ряды бьют с расширенного радиуса, ещё
-    // физически доходя до contactRange (engine.js, u.advancing) — раньше
-    // это всегда рендерилось как ATTACK-поза, ноги замирали, юнит скользил
-    // под неподвижными ногами. Пока реально движется — играем ходьбу, не
-    // застывший замах; сам замах начнётся, когда дойдёт и остановится.
     if (u.state === 'ATTACK' && u.advancing) {
+      u._attackWalkGraceUntil = frameTimeElapsed + ATTACK_WALK_GRACE_S;
+    }
+    if (u.state === 'ATTACK' && (u.advancing || (u._attackWalkGraceUntil && frameTimeElapsed < u._attackWalkGraceUntil))) {
       return { mode: 'walk', t: isPlayer ? u.x : -u.x };
     }
     if (u.state === 'ATTACK' || u.state === 'SIEGE') {
@@ -143,7 +155,6 @@
   // ТЗ №07, блок 1: позиции юнитов — логические координаты 0..lane_length_logical,
   // не зависят от вьюпорта, поэтому ресайз/поворот экрана больше не требует
   // пересчёта позиций юнитов — только геометрии отрисовки.
-  var cardsEl = document.getElementById('cards');
 
   function resize() {
     var cssW = canvas.clientWidth || window.innerWidth;
@@ -154,16 +165,6 @@
 
     var newLayout = window.LaneEngine.computeLayout(cssW, cssH, baseBalance.geometry);
     Object.keys(newLayout).forEach(function (k) { layout[k] = newLayout[k]; });
-
-    // ТЗ №20 (QA-баг 2): плашка BUILD (position:fixed, левый нижний угол,
-    // G-07(3)) раньше садилась ПОВЕРХ карточки юнита A — #cards занимает
-    // весь нижний край экрана, «нижний левый угол вьюпорта» физически
-    // совпадал с игровым контролом. Меряем реальную высоту #cards и
-    // отодвигаем плашку выше неё через CSS-переменную (не магическое
-    // число — карта либо контент карточек может измениться размером).
-    if (cardsEl) {
-      document.documentElement.style.setProperty('--cards-h', cardsEl.getBoundingClientRect().height + 'px');
-    }
   }
 
   // ---------------- pooling helpers ----------------

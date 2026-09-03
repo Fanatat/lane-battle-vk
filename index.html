@@ -63,6 +63,10 @@
   #cards {
     flex: 0 0 auto; display: flex; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
     box-sizing: border-box; background: var(--paper-panel); border-top: 1px solid var(--border);
+    /* ТЗ №22 (3-й заход на плашку BUILD, п.1): position:relative — не
+       меняет собственную раскладку #cards (уже позиционирован флексом
+       #root), только даёт контекст для #buildBadge ниже. */
+    position: relative;
   }
   .card {
     flex: 1 1 0; min-height: 64px; border-radius: 10px; border: 2px solid var(--border);
@@ -174,14 +178,19 @@
   #rotateIcon { font-size: 48px; }
   #rotateText { font-size: 16px; color: var(--ink-soft); max-width: 320px; }
 
-  /* ТЗ №20 (QA-баг 2): --cards-h — реальная высота #cards, выставляется
-     resize() в main.js. Плашка садится НАД карточками юнитов, не поверх
-     них (G-07(3): «вне игровых контролов» — было нарушено, «нижний левый
-     угол» буквально совпадал с карточкой юнита A). Без JS (--cards-h не
-     выставлена) fallback — 0px, прежнее поведение. */
+  /* ТЗ №22 (3-й заход на плашку BUILD, п.1): ТЗ №18/№20 считали числом
+     (--cards-h через JS resize()) — число расходилось с реальным DOM
+     (сейв cost/lock текста чуть меняет высоту карточек ПОСЛЕ resize(),
+     переменная не обновлялась) и плашка на 1-2px залезала на #cards,
+     задевая его border-top — отсюда «перечёркнутый» текст. Структурный
+     фикс вместо очередного числа: #buildBadge теперь ФИЗИЧЕСКИЙ ребёнок
+     #cards (см. разметку ниже), position:absolute; bottom:100% —
+     границы задаёт сам CSS box model родителя, а не JS-замер — плашка
+     физически не может залезть внутрь #cards ни при каком изменении его
+     высоты (margin-bottom — единственный зазор, тоже CSS, не число из JS). */
   #buildBadge {
-    position: fixed; left: calc(4px + env(safe-area-inset-left));
-    bottom: calc(var(--cards-h, 0px) + 4px + env(safe-area-inset-bottom));
+    position: absolute; left: calc(4px + env(safe-area-inset-left));
+    bottom: 100%; margin-bottom: 4px;
     font-size: 10px; color: var(--ink-soft); opacity: 0.35; pointer-events: none;
     z-index: 5; font-family: system-ui, sans-serif;
   }
@@ -210,6 +219,10 @@
     <canvas id="game"></canvas>
 
     <div id="cards">
+      <!-- ТЗ №22 п.1: физический ребёнок #cards (position:absolute,
+           bottom:100% — см. правило в <style>), не отдельный элемент в
+           viewport-координатах. -->
+      <div id="buildBadge" class="hidden"></div>
       <div class="card disabled" id="card-A"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleA">Боец</div><div class="cost">—</div></div>
       <div class="card disabled" id="card-B"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleB">Стрелок</div><div class="cost">—</div></div>
       <div class="card disabled" id="card-C"><canvas class="unitIcon" width="44" height="44"></canvas><div class="roleLabel" data-i18n="roleC">Щит</div><div class="cost">—</div></div>
@@ -274,9 +287,9 @@
   <!-- ТЗ №12, G-07(3): плашка номера билда — маленькая, неинтерактивная,
        low-opacity, вне игровых контролов, уважает safe-area. Показывается
        ТОЛЬКО когда Platform.BUILD реально подставлен build.py (не
-       сырой плейсхолдер платформы) — см. main.js
-       updateBuildBadge(). На локальном запуске без сборки — не видна. -->
-  <div id="buildBadge" class="hidden"></div>
+       сырой плейсхолдер платформы) — см. main.js updateBuildBadge().
+       На локальном запуске без сборки — не видна. Сама разметка — внутри
+       #cards (ТЗ №22 п.1), не здесь. -->
 
   <script src="i18n.js"></script>
   <script src="platform.js"></script>

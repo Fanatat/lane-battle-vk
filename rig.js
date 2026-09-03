@@ -161,27 +161,16 @@
       weaponAngle = WEAPON_REST + Math.sin(anim.t * 2.1) * 0.08;
     }
     var weaponLen = figH * 0.38; // ТЗ16 п.2.1: оружие держится у плеча
-    // ТЗ №21 (QA-баг 2): было pivotY = shoulderY-0.02*figH — ВЫШЕ подбородка
-    // (headCy+headR ≈ shoulderY-0.03*figH при lean=0) — навершие визуально
-    // садилось прямо на челюсть. +0.05 вниз от плеча даёт запас по вертикали;
-    // 0.09→0.13 горизонтали доводит видимый зазор от головы до чистого во
-    // всех позах (idle/walk/attack — лин раскачивает плечо/голову). Первая
-    // попытка (0.20) визуально была чище, но раздула силуэт роли A по
-    // ширине настолько, что просел критерий 3 читаемости (различимость
-    // габаритов ролей, tests/readability_check.py, порог ≥25% — при 0.20
-    // было 19%); измерено сканом (240×240, тот же канвас, что у теста):
-    // 0.09→108px, 0.13→116px, 0.15→120px, 0.17→124px ширины при пороге
-    // ≤121.5px (роль B неизменна, 162px) — 0.13 даёт запас ~5.5px, не впритык.
-    var weaponSideOffset = figH * 0.13 * m.limbScale;
-    var weaponPivotYOffset = figH * 0.05;
 
     var helmetTopY = headCy - headR * 1.95;
-    var weaponTopY = shoulderY + weaponPivotYOffset - weaponLen - figH * 0.03;
+    // ТЗ №22 п.2: пивот меча теперь = рука (armR.ey), не фиксированный
+    // офсет от плеча (см. drawMeleeWeapon) — верх клинка считаем от той
+    // же точки, иначе HP-бар (propTopY) разъедется с реальной отрисовкой.
+    var weaponTopY = armR.ey - weaponLen - figH * 0.03;
 
     return {
       m: m, cx: hipX, feetY: feetY, figH: figH, figW: w * m.wScale,
-      weaponLen: weaponLen, weaponAngle: weaponAngle, weaponSideOffset: weaponSideOffset,
-      weaponPivotYOffset: weaponPivotYOffset,
+      weaponLen: weaponLen, weaponAngle: weaponAngle,
       // bodyBarW — ширина HP-бара юнита: доля figW (уже несёт разницу ролей
       // по wScale/limbScale), не привязана к разносу плеч (торс теперь без
       // ширины — единая линия, ТЗ17).
@@ -294,13 +283,19 @@
     ctx.closePath();
   }
 
-  // Оружие бойца/щита — держится У ПЛЕЧА (п.2.1: раньше свисало кистью до
-  // колена). Пивот НЕ зависит от текущей позиции кисти — фиксирован у плеча
-  // со смещением в сторону (torso теперь линия без ширины, ТЗ17), угол
-  // отдельно анимируется rig.weaponAngle (0 = прямо вверх).
+  // Оружие бойца/щита — пивот держится КИСТИ (rig.armR.hx/hy — та же
+  // 2-костная IK-цепочка, что и рука, ТЗ №22 п.2: раньше был фиксирован
+  // офисетом от плеча, тремя правками координат так и не удалось развести
+  // его одновременно с головой (близко) и с рукой (далеко) — точка была
+  // не привязана ни к чему анатомическому. Кисть — реальная кость, меч
+  // теперь СЛЕДУЕТ за рукой при ходьбе/замахе. Угол клинка (weaponAngle)
+  // сознательно НЕ следует повороту предплечья — ТЗ16 п.2.1 уже пробовал
+  // полную привязку (позиция+поворот кисти) и это свисало до колена в
+  // покое (кисть в idle отдыхает низко); развязка угла даёт читаемый
+  // «наготове» клинок независимо от того, где сейчас отдыхает кисть.
   function drawMeleeWeapon(ctx, rig, accentColor) {
-    var pivotX = rig.shoulderX + rig.weaponSideOffset;
-    var pivotY = rig.shoulderY + rig.weaponPivotYOffset;
+    var pivotX = rig.armR.hx;
+    var pivotY = rig.armR.hy;
     var angle = -Math.PI / 2 + rig.weaponAngle;
     var tipX = pivotX + Math.cos(angle) * rig.weaponLen;
     var tipY = pivotY + Math.sin(angle) * rig.weaponLen;
