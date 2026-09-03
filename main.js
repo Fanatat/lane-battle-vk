@@ -129,6 +129,8 @@
   // ТЗ №07, блок 1: позиции юнитов — логические координаты 0..lane_length_logical,
   // не зависят от вьюпорта, поэтому ресайз/поворот экрана больше не требует
   // пересчёта позиций юнитов — только геометрии отрисовки.
+  var cardsEl = document.getElementById('cards');
+
   function resize() {
     var cssW = canvas.clientWidth || window.innerWidth;
     var cssH = canvas.clientHeight || Math.round(window.innerHeight * 0.6);
@@ -138,6 +140,16 @@
 
     var newLayout = window.LaneEngine.computeLayout(cssW, cssH, baseBalance.geometry);
     Object.keys(newLayout).forEach(function (k) { layout[k] = newLayout[k]; });
+
+    // ТЗ №20 (QA-баг 2): плашка BUILD (position:fixed, левый нижний угол,
+    // G-07(3)) раньше садилась ПОВЕРХ карточки юнита A — #cards занимает
+    // весь нижний край экрана, «нижний левый угол вьюпорта» физически
+    // совпадал с игровым контролом. Меряем реальную высоту #cards и
+    // отодвигаем плашку выше неё через CSS-переменную (не магическое
+    // число — карта либо контент карточек может измениться размером).
+    if (cardsEl) {
+      document.documentElement.style.setProperty('--cards-h', cardsEl.getBoundingClientRect().height + 'px');
+    }
   }
 
   // ---------------- pooling helpers ----------------

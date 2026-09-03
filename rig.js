@@ -405,8 +405,25 @@
     // отменяет ТЗ16 п.1.2 для этой линии развития).
   }
 
+  // ТЗ №20 (QA-баг 3): обе стороны рисовались буквально одной и той же
+  // геометрией — визуально невозможно было понять, кто на чьей стороне,
+  // не читая заливку. Минимум по формулировке задачи — зеркалирование
+  // рига: враг (isPlayer=false) отражается по горизонтали вокруг центра
+  // своего слота (rig.cx), player остаётся как был (ни один существующий
+  // визуальный тест не завязан на isPlayer=false — decor/readability
+  // мерят только цвет/контраст, prop_check всегда зовёт isPlayer=true,
+  // площадь и яркость под отражением не меняются).
+  function beginSideMirror(ctx, rig, isPlayer) {
+    if (isPlayer) return false;
+    ctx.save();
+    ctx.translate(rig.cx * 2, 0);
+    ctx.scale(-1, 1);
+    return true;
+  }
+
   function drawUnit(ctx, shape, isPlayer, x, y, w, h, fillStyle, strokeStyle, lineWidth, anim) {
     var rig = computeRig(shape, x, y, w, h, anim);
+    var mirrored = beginSideMirror(ctx, rig, isPlayer);
     drawBodyOnly(ctx, rig, lineWidth);
     // fillStyle здесь — АКЦЕНТ стороны (balance.json.sides.*.fill), красится
     // только на шлем/повязку/щит, не на тело.
@@ -422,6 +439,7 @@
     ctx.lineWidth = Math.max(lineWidth, rig.figH * 0.025);
     ctx.stroke();
     drawProps(ctx, shape, isPlayer, rig, fillStyle, strokeStyle, lineWidth);
+    if (mirrored) ctx.restore();
     return rig;
   }
 
@@ -434,9 +452,13 @@
   }
 
   // Путь только заливаемых частей — для вспышки попадания в main.js.
+  // Тот же mirror, что и drawUnit() — иначе флэш вспышки не совпал бы по
+  // пикселям с отражённым враждебным телом.
   function pathUnitFillShapes(ctx, shape, isPlayer, x, y, w, h, anim) {
     var rig = computeRig(shape, x, y, w, h, anim);
+    var mirrored = beginSideMirror(ctx, rig, isPlayer);
     pathFillGroup(ctx, shape, isPlayer, rig);
+    if (mirrored) ctx.restore();
   }
 
   // ---------------- базы: башня (игрок) / частокол (враг) ----------------
