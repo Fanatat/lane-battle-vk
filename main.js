@@ -94,6 +94,10 @@
       // первый же persist() полным объектом стёр бы реальный прогресс
       // на сбое сети при старте (S-03: сейв пишется всегда целиком).
       await Platform.init();
+      // ТЗ №18 (п.2.14 площадки): lang обязан отражать реально определённый
+      // SDK-язык, не статичную строку из index.html — контент по-прежнему
+      // RU-only, перевод текста тут не делается.
+      document.documentElement.lang = Platform.getLang();
       var loadResult = await Platform.load();
       if (loadResult.ok) {
         campaignState = window.LaneCampaign.migrateSave(loadResult.data);
