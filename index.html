@@ -39,6 +39,58 @@
   }
   #campaignBar { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
   #trophyBar { display: flex; align-items: center; gap: 4px; }
+
+  /* Соревнование 2026-09-05, FUN_SPEC раздел 2/3/7 ("новизна каждые 30-45с",
+     находка критика 1, сознательно отложено block3b): "дверь" (доступный
+     ближайший юнит + прогресс) раньше была видна ТОЛЬКО в попапе конца
+     раунда (#doorPanel) — во время самого боя цель забывалась. Компактный
+     клон в topBar держит цель на экране ПОСТОЯННО, тот же приём палитры
+     (repeating-linear-gradient "решётка", doorReadyPulse), не дублирует
+     покупку — она остаётся только в попапе/магазине. */
+  #doorChip { display: flex; align-items: center; gap: 6px; }
+  #doorChip.hidden { display: none; }
+  #doorChipIconWrap { position: relative; flex: 0 0 auto; width: 26px; height: 26px; }
+  #doorChipIcon { width: 26px; height: 26px; display: block; filter: grayscale(0.5) brightness(0.75); }
+  #doorChipBars {
+    position: absolute; inset: 0; pointer-events: none; border-radius: 6px;
+    background: repeating-linear-gradient(90deg, rgba(43,39,35,0.55) 0 2px, transparent 2px 6px);
+  }
+  #doorChipLock { position: absolute; right: -3px; bottom: -3px; font-size: 11px; }
+  #doorChipText { display: flex; flex-direction: column; gap: 2px; min-width: 46px; }
+  #doorChipTrack {
+    height: 5px; border-radius: 3px; background: var(--paper-panel-2); border: 1px solid var(--border); overflow: hidden;
+  }
+  #doorChipFill { height: 100%; width: 0%; background: var(--accent); transition: width 300ms ease-out; }
+  #doorChipCount { font-size: 10px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #doorChip.ready #doorChipIconWrap { animation: doorReadyPulse 1.4s ease-in-out infinite; }
+  #doorChip.novelty #doorChipIconWrap { animation: doorChipNoveltyPulse 900ms ease-out; }
+  @keyframes doorChipNoveltyPulse {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.28); filter: grayscale(0.5) brightness(0.9) drop-shadow(0 0 5px var(--accent)); }
+    100% { transform: scale(1); }
+  }
+  @media (max-width: 420px) {
+    #doorChipText { min-width: 34px; }
+    #doorChipCount { font-size: 9px; }
+  }
+
+  /* Разведка волны наперёд (novelty-бит 2) — короткий транзитный баннер над
+     полем, не DOM-попап (не блокирует ввод), исчезает сам через CSS. */
+  #scoutBanner {
+    position: fixed; top: 8px; left: 50%; transform: translateX(-50%) translateY(-140%);
+    display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
+    background: var(--paper-panel); border: 1px solid var(--border); box-shadow: 0 4px 16px var(--shadow);
+    z-index: 15; pointer-events: none; opacity: 0;
+  }
+  #scoutBanner.show { animation: scoutBannerPop 2.4s ease-out; }
+  #scoutBannerIcon { width: 26px; height: 26px; display: block; }
+  #scoutBannerText { font-size: 13px; font-weight: 700; color: var(--accent-ink); white-space: nowrap; }
+  @keyframes scoutBannerPop {
+    0% { opacity: 0; transform: translateX(-50%) translateY(-140%); }
+    12% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-140%); }
+  }
   #foodBar { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   #foodBar .icon { font-size: 18px; }
   #foodBarTrack {
@@ -275,6 +327,17 @@
       <div id="campaignBar">
         <span id="battleLabel">Битва 1</span>
         <span id="trophyBar"><span class="icon">🏆</span><span id="trophyValue">0</span></span>
+        <span id="doorChip" class="hidden">
+          <span id="doorChipIconWrap">
+            <canvas id="doorChipIcon" width="26" height="26"></canvas>
+            <span id="doorChipBars"></span>
+            <span id="doorChipLock">🔒</span>
+          </span>
+          <span id="doorChipText">
+            <span id="doorChipTrack"><span id="doorChipFill"></span></span>
+            <span id="doorChipCount">0/0</span>
+          </span>
+        </span>
       </div>
       <div id="foodBar">
         <span class="icon">🍖</span>
@@ -358,6 +421,11 @@
       <div id="upgradeShop"></div>
       <button id="restartBtn">Ещё раз</button>
     </div>
+  </div>
+
+  <div id="scoutBanner">
+    <canvas id="scoutBannerIcon" width="26" height="26"></canvas>
+    <span id="scoutBannerText"></span>
   </div>
 
   <div id="devPanel" class="hidden"></div>

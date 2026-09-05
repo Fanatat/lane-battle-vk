@@ -302,8 +302,10 @@
     "base_destroy_shake_ms": 300,
     "card_shake_px": 6,
     "card_shake_ms": 150,
-    "ranged_shot_ms": 80,
-    "ranged_shot_color": "rgba(193,104,47,0.85)",
+    "ranged_shot_ms": 240,
+    "ranged_shot_color": "rgba(193,104,47,0.9)",
+    "ranged_shot_trail_color": "rgba(193,104,47,0.35)",
+    "ranged_shot_arc_height": 0.16,
     "base_def_flash_ms": 180,
     "death_burst_particles": 10,
     "death_burst_ms": 260,
@@ -360,6 +362,11 @@
       "loss_streak_threshold": 3,
       "free_unit_strength_mult": 1.0,
       "idle_hint_delay_s": 6
+    },
+    "novelty": {
+      "_comment": "Соревнование 2026-09-05, FUN_SPEC раздел 2/7 (находка критика 1, ранее сознательно отложено block3b): 'секунд между «что-то новое» на экране', min 30/max 60/старт 45 по разделу 7 — интервал берётся случайно из [interval_min_s, interval_max_s] в СИМУЛЯЦИОННЫХ секундах боя (state.timeElapsed), не в реальных — при ×2/×3 такт идёт чаще по часам, но держит тот же ритм относительно самого боя. Чередует 2 события (main.js triggerNoveltyBeat): пульс постоянного чипа-двери (topBar) и разведка волны ДАЛЬШЕ next-preview (заглядывает в enemy.schedule на 2 шага вперёд, если есть).",
+      "interval_min_s": 30,
+      "interval_max_s": 45
     }
   }
 }

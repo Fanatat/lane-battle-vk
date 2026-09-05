@@ -9,9 +9,11 @@ main.js render()), силуэты — юниты обеих сторон (window
 
 Критерий 7: "зона обороны не пересекает более трети ширины поля." Дуга
 обороны рисуется main.js drawBaseDefenseArc с радиусом
-min(bd.range_logical * pxPerLogical, layout.w * 0.15) — проверяем сам
-расчёт (тот же, что в main.js) на нескольких геометриях layout_check.js,
-а не только формулу на бумаге.
+min(bd.range_logical * pxPerLogical, layout.w * 0.10) — константа сокращена
+с 0.15 соревнованием 2026-09-05 (ТЗ №20 п.44: клин при 0.15 и секторе ±54°
+давал вертикальный охват ≈1.6r, визуально доминировал над кадром) —
+проверяем сам расчёт (тот же, что в main.js) на нескольких геометриях
+layout_check.js, а не только формулу на бумаге.
 
 Запуск: python3 tests/decor_check.py
 """
@@ -110,7 +112,7 @@ def main():
             layout = page.evaluate("([w, h, geometry]) => window.LaneEngine.computeLayout(w, h, geometry)", [w, h, BALANCE['geometry']])
             bd = BALANCE['base_defense']
             range_px = bd['range_logical'] * layout['pxPerLogical']
-            visual_r = min(range_px, layout['w'] * 0.15)
+            visual_r = min(range_px, layout['w'] * 0.10)
             arc_width_fraction = (visual_r * 2) / layout['w']
             record(
                 f'критерий 7 {label}: диаметр индикатора обороны {visual_r*2:.1f}px = {arc_width_fraction*100:.1f}% ширины поля (нужно ≤{MAX_ARC_WIDTH_FRACTION*100:.1f}%)',

@@ -327,6 +327,79 @@
 
     var newLayout = window.LaneEngine.computeLayout(cssW, cssH, baseBalance.geometry);
     Object.keys(newLayout).forEach(function (k) { layout[k] = newLayout[k]; });
+    bgArt = computeBackgroundArt();
+  }
+
+  // ---------------- фон сцены (ТЗ №20 п.44: "тяп-ляп" — самый большой вклад
+  // в это ощущение был не риг/базы, а плоская однотонная заливка неба над
+  // землёй). Соревнование 2026-09-05: небо-градиент + мягкое солнце + 2 слоя
+  // холмов той же тёплой палитрой, что уже есть (paper-panel/paper-panel-2,
+  // никаких новых цветов). Геометрия считается ОДИН РАЗ на resize (детер-
+  // министичный псевдошум, тот же приём, что drawGroundBand), не каждый
+  // кадр — это декор, не игровая механика.
+  // fps-профиль (см. NOTES соревнования): градиенты, созданные заново каждый
+  // кадр (createLinearGradient/createRadialGradient), на этой связке
+  // headless-Chromium давали реальную просадку (~25→~16.5 fps на 24 юнитах,
+  // измерено адаптацией tests/fps_check.py). Раз геометрия фона зависит
+  // только от layout (меняется на resize, не каждый кадр), рисуем её ОДИН
+  // РАЗ на offscreen-канвас в computeBackgroundArt() и в render() просто
+  // блитим готовую картинку (drawImage) — на порядок дешевле пересоздания
+  // градиентов 60 раз в секунду.
+  var bgArt = null;
+  function noise01(i) { return Math.sin(i * 12.9898) * 0.5 + 0.5; }
+  function hillPoints(w, groundY, count, baseFrac, ampFrac, seedOffset) {
+    var pts = [];
+    for (var i = 0; i <= count; i++) {
+      var n = noise01(i + seedOffset);
+      pts.push({ x: (w / count) * i, y: groundY - groundY * (baseFrac + ampFrac * n) });
+    }
+    return pts;
+  }
+  function drawHillLayer(bctx, w, groundY, pts, color) {
+    bctx.beginPath();
+    bctx.moveTo(0, groundY);
+    bctx.lineTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var midX = (pts[i - 1].x + pts[i].x) / 2, midY = (pts[i - 1].y + pts[i].y) / 2;
+      bctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, midX, midY);
+    }
+    bctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    bctx.lineTo(w, groundY);
+    bctx.closePath();
+    bctx.fillStyle = color;
+    bctx.fill();
+  }
+  function computeBackgroundArt() {
+    var w = layout.w;
+    var groundY = layout.laneY + layout.unitSize * 0.48;
+    if (w <= 0 || groundY <= 0) return null;
+    var canvas2 = document.createElement('canvas');
+    canvas2.width = Math.max(1, Math.round(w * dpr));
+    canvas2.height = Math.max(1, Math.round(groundY * dpr));
+    var bctx = canvas2.getContext('2d');
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    var sky = bctx.createLinearGradient(0, 0, 0, groundY);
+    sky.addColorStop(0, '#f7efd9');
+    sky.addColorStop(1, '#e9dcbd');
+    bctx.fillStyle = sky;
+    bctx.fillRect(0, 0, w, groundY);
+
+    var sunCx = w * 0.80, sunCy = groundY * 0.24, sunR = Math.max(30, groundY * 0.5);
+    var sun = bctx.createRadialGradient(sunCx, sunCy, 0, sunCx, sunCy, sunR);
+    sun.addColorStop(0, 'rgba(193,104,47,0.22)');
+    sun.addColorStop(1, 'rgba(193,104,47,0)');
+    bctx.fillStyle = sun;
+    bctx.fillRect(0, 0, w, groundY);
+
+    drawHillLayer(bctx, w, groundY, hillPoints(w, groundY, 6, 0.14, 0.07, 2.3), 'rgba(183,164,126,0.30)');
+    drawHillLayer(bctx, w, groundY, hillPoints(w, groundY, 4, 0.05, 0.06, 8.6), 'rgba(139,113,74,0.28)');
+
+    return { canvas: canvas2, w: w, groundY: groundY };
+  }
+  function drawBackgroundArt() {
+    if (!bgArt) return;
+    ctx.drawImage(bgArt.canvas, 0, 0, bgArt.w, bgArt.groundY);
   }
 
   // ---------------- pooling helpers ----------------
@@ -374,6 +447,8 @@
     baseDefFlashMs.player = 0; baseDefFlashMs.enemy = 0;
     victoryFlashMs = 0;
     deathBurstCountThisBattle = 0;
+    noveltyBeatIndex = 0;
+    resetNoveltyTimer();
     resize();
     engine = window.LaneEngine.createEngine(battleBalance, layout, {
       onDamage: function (logicalX, y, value) {
@@ -591,6 +666,13 @@
 
     if (!state.over) {
       engine.step(simDt);
+      // Новизна считается в СИМУЛЯЦИОННЫХ секундах боя (state.timeElapsed),
+      // не в реальных — на ×2/×3 такт бьёт по часам чаще, но держит тот же
+      // ритм относительно самого боя, а не отстаёт/забегает вперёд него.
+      if (state.timeElapsed >= noveltyNextAt) {
+        noveltyNextAt = state.timeElapsed + rollNoveltyInterval();
+        triggerNoveltyBeat();
+      }
     }
 
     var playerUnits = engine.getPlayerUnits();
@@ -677,8 +759,7 @@
     // не нужна: низ и так по большей части занят землёй/HP-барами/подписью.
     var groundY = layout.laneY + layout.unitSize * 0.48;
     var groundH = layout.unitSize * 0.35;
-    ctx.fillStyle = '#e9dcbd';
-    ctx.fillRect(0, 0, layout.w, groundY);
+    drawBackgroundArt();
     // ТЗ №13, блок 1: полоса земли с фактурой вместо отладочной линии.
     window.Rig.drawGroundBand(ctx, layout.w, groundY, groundH, '#e3d3a8', 'rgba(139,113,74,0.35)');
     // ТЗ №15, раздел 2, блок 5.4: редкий орнамент верха кадра — светлее
@@ -716,10 +797,34 @@
   // Подпись стороны — Rig.drawClampedLabel: измеряет реальную ширину
   // текста и клэмпит X внутрь канваса, дефект обрезки края (ТЗ №01) чинится
   // измерением, а не подгонкой отступа на глаз.
+  var pillarGradCache = { player: null, playerKey: null, enemy: null, enemyKey: null };
+  function getPillarGradient(isPlayer, base) {
+    var key = base.y + ':' + base.h;
+    var cacheKey = isPlayer ? 'playerKey' : 'enemyKey';
+    var cacheVal = isPlayer ? 'player' : 'enemy';
+    if (pillarGradCache[cacheKey] !== key) {
+      var grad = ctx.createLinearGradient(0, base.y, 0, base.y + base.h);
+      grad.addColorStop(0, 'rgba(255,255,255,0.16)');
+      grad.addColorStop(0.6, 'rgba(0,0,0,0.02)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.30)');
+      pillarGradCache[cacheVal] = grad;
+      pillarGradCache[cacheKey] = key;
+    }
+    return pillarGradCache[cacheVal];
+  }
+
   function drawBase(base, hp, maxHp, side, label, numberAlign, isPlayer) {
     // Столб-основание (как раньше, ТЗ №01-12) держит контраст подписи —
     // укрепление рисуется НАД ним отдельной надстройкой (Rig), не вместо.
     ctx.fillStyle = side.fill;
+    ctx.fillRect(base.x, base.y, base.w, base.h);
+    // Соревнование 2026-09-05 (ТЗ №20 п.44): пилон — самая крупная плоская
+    // заливка в кадре (1.9 высоты юнита) — вертикальный градиент даёт ему
+    // объём вместо однотонного прямоугольника, вторым проходом поверх той
+    // же заливки (не парсит side.fill — работает для любого цвета стороны).
+    // Градиент кэшируется по (isPlayer, base.y, base.h) — пересоздаётся
+    // только на resize, не каждый кадр (fps-профиль, см. computeBackgroundArt).
+    ctx.fillStyle = getPillarGradient(isPlayer, base);
     ctx.fillRect(base.x, base.y, base.w, base.h);
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(base.x, base.y, base.w, base.h * 0.18);
@@ -794,7 +899,13 @@
     // поля. bd.range_logical — реальная боевая дистанция (не трогаем,
     // Block 4 п.5), но ИНДИКАТОР дистанции рисуется урезанным радиусом —
     // отображение приближённое, как превью волны без точных цифр.
-    var visualR = Math.min(rangePx, layout.w * 0.15);
+    // Соревнование 2026-09-05: было min(rangePx, 15% ширины) — на многих
+    // раскладках закрывало почти половину высоты канваса переливчатым
+    // клином (сектор ±54° при таком радиусе даёт вертикальный охват
+    // 2r·sin(54°)≈1.6r), само по себе читалось как визуальный мусор, а не
+    // чёткая граница. Радиус сокращён — тот же критерий decor_check.py
+    // (≤ трети ширины поля) выполняется с ещё бОльшим запасом.
+    var visualR = Math.min(rangePx, layout.w * 0.10);
     drawBaseDefenseArc(layout.playerBase.frontX, battleBalance.sides.player, visualR, 0, baseDefFlashMs.player);
     drawBaseDefenseArc(layout.enemyBase.frontX, battleBalance.sides.enemy, visualR, Math.PI, baseDefFlashMs.enemy);
   }
@@ -832,6 +943,21 @@
     ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
     ctx.closePath();
     ctx.fill();
+    // Соревнование 2026-09-05 (ТЗ №20 п.44, "граница дальности стрельбы"
+    // читалась нечётко): заливка сама по себе не давала чёткого края —
+    // добавлена штрихованная дуга ПО КРАЮ дальности. Цвет — side.text
+    // (готовый высококонтрастный партнёр side.fill для КАЖДОЙ стороны,
+    // balance.json), не фиксированные чернила — те тонули в тёмной заливке
+    // врага (#5c2a1f), почти не читались на нём, читались только на светлой
+    // стороне игрока.
+    ctx.strokeStyle = side.text;
+    ctx.globalAlpha = 0.55 + flashFrac * 0.45;
+    ctx.lineWidth = Math.max(1, layout.unitSize * 0.025);
+    ctx.setLineDash([layout.unitSize * 0.07, layout.unitSize * 0.05]);
+    ctx.beginPath();
+    ctx.arc(frontX, layout.laneY, rangePx, facingAngle - ARC_HALF, facingAngle + ARC_HALF);
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.globalAlpha = 1;
   }
 
@@ -928,16 +1054,47 @@
     ctx.globalAlpha = 1;
   }
 
+  // Соревнование 2026-09-05 (ТЗ №20 п.44, "невидимые снаряды лучников"):
+  // раньше drawShot рисовал ВСЮ линию от источника до цели сразу на весь
+  // ranged_shot_ms — визуально это лазер-вспышка на всю дистанцию, а не
+  // летящая стрела, и при коротком ranged_shot_ms (80мс, ~5 кадров) почти
+  // не читалась глазом. Теперь позиция стрелы интерполируется по s.age —
+  // она реально ЛЕТИТ от source к target с лёгкой дугой (juice.
+  // ranged_shot_arc_height), с коротким затухающим следом позади и
+  // наконечником-стрелкой, развёрнутым по направлению полёта.
   function drawShot(s) {
     if (!s.active) return;
-    var t = s.age / s.maxAge;
-    ctx.globalAlpha = Math.max(0, 1 - t);
-    ctx.strokeStyle = battleBalance.juice.ranged_shot_color;
-    ctx.lineWidth = Math.max(1, layout.unitSize * 0.05);
+    var frac = Math.min(1, s.age / s.maxAge);
+    var arc = -Math.sin(frac * Math.PI) * layout.unitSize * battleBalance.juice.ranged_shot_arc_height;
+    var cx = s.fromX + (s.toX - s.fromX) * frac;
+    var cy = s.fromY + (s.toY - s.fromY) * frac + arc;
+    var trailFrac = Math.max(0, frac - 0.12);
+    var trailArc = -Math.sin(trailFrac * Math.PI) * layout.unitSize * battleBalance.juice.ranged_shot_arc_height;
+    var tx = s.fromX + (s.toX - s.fromX) * trailFrac;
+    var ty = s.fromY + (s.toY - s.fromY) * trailFrac + trailArc;
+    var angle = Math.atan2(cy - ty, cx - tx);
+    var len = Math.max(6, layout.unitSize * 0.16);
+
+    ctx.globalAlpha = Math.max(0, 1 - frac * 0.3); // след/наконечник живут почти весь полёт, гаснут только у самой цели
+    ctx.strokeStyle = battleBalance.juice.ranged_shot_trail_color;
+    ctx.lineWidth = Math.max(1, layout.unitSize * 0.025);
     ctx.beginPath();
-    ctx.moveTo(s.fromX, s.fromY);
-    ctx.lineTo(s.toX, s.toY);
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(cx, cy);
     ctx.stroke();
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.fillStyle = battleBalance.juice.ranged_shot_color;
+    ctx.beginPath();
+    ctx.moveTo(len * 0.5, 0);
+    ctx.lineTo(-len * 0.5, len * 0.16);
+    ctx.lineTo(-len * 0.3, 0);
+    ctx.lineTo(-len * 0.5, -len * 0.16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
     ctx.globalAlpha = 1;
   }
 
@@ -983,6 +1140,13 @@
   var doorLabelEl = document.getElementById('doorLabel');
   var doorProgressFillEl = document.getElementById('doorProgressFill');
   var doorCountEl = document.getElementById('doorCount');
+  var doorChipEl = document.getElementById('doorChip');
+  var doorChipIconEl = document.getElementById('doorChipIcon');
+  var doorChipFillEl = document.getElementById('doorChipFill');
+  var doorChipCountEl = document.getElementById('doorChipCount');
+  var scoutBannerEl = document.getElementById('scoutBanner');
+  var scoutBannerIconEl = document.getElementById('scoutBannerIcon');
+  var scoutBannerTextEl = document.getElementById('scoutBannerText');
 
   function updateHud() {
     var state = engine.getState();
@@ -1017,6 +1181,7 @@
   function updateCampaignHud() {
     battleLabelEl.textContent = t('battleLabel').replace('{n}', campaignState.battleNumber);
     trophyValueEl.textContent = campaignState.trophies;
+    updateDoorChip();
   }
 
   // ТЗ №10: запись по событиям (S-04) — вызывается в каждой точке, где
@@ -1188,6 +1353,94 @@
     doorPanelEl.classList.remove('hidden');
     doorPanelEl.classList.toggle('ready', frac >= 1);
     window.__feel.push({ type: 'hook_shown', name: 'door:' + key });
+  }
+
+  // Соревнование 2026-09-05, FUN_SPEC раздел 3 ("3 мин: вижу конкретную
+  // ближайшую цель") — раньше дверь была видна ТОЛЬКО в попапе конца
+  // раунда, во время самого боя цель пропадала с экрана. Компактный клон в
+  // topBar (#doorChip) — та же кампания/прогресс, что и updateDoorPanel,
+  // просто второй, всегда видимый рендер-таргет; покупка по-прежнему
+  // только в попапе/магазине, дверь ничего не дублирует функционально.
+  function updateDoorChip() {
+    if (!doorChipEl) return;
+    var key = nextLockedUnlockKey();
+    if (!key) { doorChipEl.classList.add('hidden'); return; }
+    var def = baseBalance.campaign.unlocks[key];
+    var letter = UNLOCK_UNIT_LETTER[key];
+    var have = campaignState.trophies;
+    var cost = def.cost;
+    var frac = cost > 0 ? Math.max(0, Math.min(1, have / cost)) : 1;
+    doorChipFillEl.style.width = (frac * 100) + '%';
+    doorChipCountEl.textContent = frac >= 1 ? t('doorReady') : (Math.min(have, cost) + '/' + cost);
+    drawIconCanvas(doorChipIconEl, baseBalance.units[letter].shape, baseBalance.sides.player);
+    doorChipEl.classList.remove('hidden');
+    doorChipEl.classList.toggle('ready', frac >= 1);
+  }
+
+  // ---------------- новизна раз в 30-45с (FUN_SPEC раздел 2/7, находка
+  // критика 1 — "скучно/монотонно", 51 упоминание жалоб лидера, сознательно
+  // отложено в block3b) ----------------
+  // Чередует 2 читаемых события без придумывания несуществующего прогресса
+  // (трофеи реально не меняются посреди боя, campaign.js reward() платит
+  // только на исходе битвы): (1) пульс уже существующей цели (doorChip) —
+  // честное "не забывай, зачем играешь", не фальшивый прогресс-бар;
+  // (2) разведка — силуэт волны ДАЛЬШЕ уже показанного next-preview
+  // (drawWavePreview), если такая есть в enemy.schedule.
+  var noveltyNextAt = 0;
+  var noveltyBeatIndex = 0;
+  var scoutBannerHideTimer = null;
+
+  function rollNoveltyInterval() {
+    var n = battleBalance.campaign.novelty;
+    return n.interval_min_s + Math.random() * (n.interval_max_s - n.interval_min_s);
+  }
+
+  function resetNoveltyTimer() {
+    noveltyNextAt = rollNoveltyInterval();
+  }
+
+  function findLookaheadWave(afterTime) {
+    var schedule = battleBalance.enemy.schedule;
+    var best = null;
+    for (var i = 0; i < schedule.length; i++) {
+      if (schedule[i].time > afterTime && (!best || schedule[i].time < best.time)) best = schedule[i];
+    }
+    return best;
+  }
+
+  function pulseDoorChip() {
+    if (!doorChipEl || doorChipEl.classList.contains('hidden')) return false;
+    doorChipEl.classList.remove('novelty');
+    void doorChipEl.offsetWidth; // restart CSS animation
+    doorChipEl.classList.add('novelty');
+    return true;
+  }
+
+  function showScoutReveal() {
+    var state = engine.getState();
+    var afterTime = Math.max(state.timeElapsed, state.nextWaveTime || 0);
+    var wave = findLookaheadWave(afterTime);
+    if (!wave) return false;
+    var spec = battleBalance.units[wave.type];
+    drawIconCanvas(scoutBannerIconEl, spec.shape, battleBalance.sides.enemy);
+    scoutBannerTextEl.textContent = t('scoutIncoming').replace('{role}', t('role' + wave.type));
+    scoutBannerEl.classList.remove('show');
+    void scoutBannerEl.offsetWidth; // restart CSS animation
+    scoutBannerEl.classList.add('show');
+    if (scoutBannerHideTimer) clearTimeout(scoutBannerHideTimer);
+    scoutBannerHideTimer = setTimeout(function () { scoutBannerEl.classList.remove('show'); }, 2400);
+    return true;
+  }
+
+  function triggerNoveltyBeat() {
+    // Разведка требует лоокахеда дальше в расписании — не всегда есть
+    // (последние волны/endless-режим без явного schedule дальше); чередуем
+    // события по индексу, но при неудаче падаем на пульс двери, чтобы такт
+    // никогда не проходил молча.
+    var wantScout = noveltyBeatIndex % 2 === 1;
+    noveltyBeatIndex++;
+    var kind = wantScout && showScoutReveal() ? 'scout' : (pulseDoorChip() ? 'door' : null);
+    if (kind) window.__feel.push({ type: 'fx', name: 'novelty:' + kind });
   }
 
   // "Большой", редкий момент (реже раза в раунд) — реальное открытие

@@ -505,7 +505,77 @@
   }
 
   // ---------------- базы: башня (игрок) / частокол (враг) ----------------
+  // Соревнование 2026-09-05 (ТЗ №20 п.44, "виды баз/башен... на тяп-ляп"):
+  // плоская заливка одним цветом читалась как черновик. Добавлены (1) объёмный
+  // градиент поверх той же заливки (не парсит fillStyle — рисует второй проход
+  // тем же path полупрозрачным бело/чёрным градиентом, работает для любого
+  // цвета стороны без цветовой арифметики), (2) тень на земле под структурой,
+  // (3) тёмная арка ворот у подножия — даёт обеим базам читаемый "вход",
+  // общий визуальный язык вместо двух ничем не связанных силуэтов.
+  // Кэш градиента по (slot, topY, baseY) — createLinearGradient пересоздавать
+  // на каждый кадр незачем: topY/baseY меняются только на resize, а
+  // fillStructureShading зовётся дважды за кадр (башня игрока + частокол
+  // врага), т.е. без кэша — 2 лишних градиента 60 раз в секунду впустую
+  // (fps-профиль, см. main.js computeBackgroundArt).
+  var shadingCache = {};
+  function fillStructureShading(ctx, topY, baseY, slot) {
+    var key = topY + ':' + baseY;
+    var entry = shadingCache[slot];
+    if (!entry || entry.key !== key) {
+      var grad = ctx.createLinearGradient(0, topY, 0, baseY);
+      grad.addColorStop(0, 'rgba(255,255,255,0.32)');
+      grad.addColorStop(0.55, 'rgba(255,255,255,0.04)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.26)');
+      entry = { key: key, grad: grad };
+      shadingCache[slot] = entry;
+    }
+    ctx.fillStyle = entry.grad;
+    ctx.fill();
+  }
+
+  function drawStructureShadow(ctx, base) {
+    ctx.beginPath();
+    addEllipse(ctx, base.x + base.w / 2, base.y + base.h - base.h * 0.01, base.w * 0.56, base.h * 0.03);
+    ctx.fillStyle = 'rgba(43,39,35,0.22)';
+    ctx.fill();
+  }
+
+  // Пилон базы (main.js drawBase) — прямоугольник от base.y (ВЕРХ) вниз на
+  // base.h, укрепление (крепостная стенка/частокол) — только тонкая
+  // надстройка у base.y (см. drawTower/drawPalisade). Ворота — деталь самого
+  // пилона, поэтому якорятся на его НИЗ (base.y+base.h — уровень земли), не
+  // на base.y, иначе арка повисала бы у верхнего края, а не у подножия.
+  function drawGateArch(ctx, base, strokeStyle) {
+    var gateW = base.w * 0.30;
+    var gateH = base.h * 0.32;
+    var groundY = base.y + base.h;
+    var archR = gateW / 2;
+    var gx = base.x + base.w / 2 - archR;
+    var straightTopY = groundY - gateH + archR;
+    ctx.beginPath();
+    ctx.moveTo(gx, groundY);
+    ctx.lineTo(gx, straightTopY);
+    ctx.arc(gx + archR, straightTopY, archR, Math.PI, 0, false);
+    ctx.lineTo(gx + gateW, groundY);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(20,16,12,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = Math.max(1, base.w * 0.015);
+    ctx.stroke();
+    // засов ворот — пара горизонтальных досок, читается как деталь, не пятно
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = Math.max(1, base.w * 0.012);
+    [0.35, 0.65].forEach(function (f) {
+      ctx.beginPath();
+      ctx.moveTo(gx, groundY - gateH * f);
+      ctx.lineTo(gx + gateW, groundY - gateH * f);
+      ctx.stroke();
+    });
+  }
+
   function drawTower(ctx, base, fillStyle, strokeStyle) {
+    drawStructureShadow(ctx, base);
     var cx = base.x + base.w / 2;
     var topY = base.y - base.h * 0.11;
     var crenels = 3;
@@ -524,9 +594,18 @@
     ctx.closePath();
     ctx.fillStyle = fillStyle;
     ctx.fill();
+    fillStructureShading(ctx, topY, base.y, 'tower');
     ctx.strokeStyle = strokeStyle;
     ctx.lineWidth = Math.max(1, base.w * 0.04);
     ctx.stroke();
+    drawGateArch(ctx, base, strokeStyle);
+    // окна-бойницы — две тёмные щели, читаются издали как признак укрепления
+    ctx.fillStyle = 'rgba(20,16,12,0.5)';
+    [0.32, 0.68].forEach(function (f) {
+      ctx.beginPath();
+      ctx.roundRect(base.x + base.w * f - base.w * 0.02, topY + base.h * 0.14, base.w * 0.04, base.h * 0.16, base.w * 0.02);
+      ctx.fill();
+    });
     // флаг — выступает над башней
     ctx.beginPath();
     ctx.moveTo(cx, topY);
@@ -543,6 +622,7 @@
   }
 
   function drawPalisade(ctx, base, fillStyle, strokeStyle) {
+    drawStructureShadow(ctx, base);
     var stakes = 5;
     var seg = base.w * 0.90 / stakes;
     ctx.beginPath();
@@ -558,9 +638,21 @@
     ctx.closePath();
     ctx.fillStyle = fillStyle;
     ctx.fill();
+    fillStructureShading(ctx, base.y - base.h * 0.19, base.y, 'palisade');
     ctx.strokeStyle = strokeStyle;
     ctx.lineWidth = Math.max(1, base.w * 0.04);
     ctx.stroke();
+    drawGateArch(ctx, base, strokeStyle);
+    // верёвочная обвязка кольев — двойная линия поперёк, читается как
+    // настоящий частокол (связанные брёвна), не гребёнка зубцов.
+    ctx.strokeStyle = 'rgba(20,16,12,0.4)';
+    ctx.lineWidth = Math.max(1, base.w * 0.012);
+    [0.55, 0.82].forEach(function (f) {
+      ctx.beginPath();
+      ctx.moveTo(base.x + base.w * 0.05, base.y - base.h * 0.14 * f);
+      ctx.lineTo(base.x + base.w * 0.95, base.y - base.h * 0.14 * f);
+      ctx.stroke();
+    });
   }
 
   function drawBaseStructure(ctx, base, isPlayer, fillStyle, strokeStyle) {

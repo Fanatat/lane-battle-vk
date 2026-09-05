@@ -57,6 +57,7 @@ const I18N = {
     upg_damage_C: 'Урон щита C',
     doorLabel: 'Скоро откроется: {role}',
     doorReady: 'Готово к открытию!',
+    scoutIncoming: 'Разведка: дальше — {role}',
     // Блок 3b: anti-frustration (FUN_SPEC раздел 6) + бегущие цифры награды.
     almostLine: 'Первое поражение: снёс {pct}% базы врага. Теперь понятно, куда давить — пробуй ещё раз.\n\n',
     almostLineNoDamage: 'Первое поражение: в этот раз бойцы не успели вступить в бой. В следующий раз ставь их раньше — это не наказание, а информация.\n\n',
@@ -104,6 +105,7 @@ const I18N = {
     upg_damage_C: 'Shield C damage',
     doorLabel: 'Coming soon: {role}',
     doorReady: 'Ready to unlock!',
+    scoutIncoming: 'Scouted ahead: {role}',
     almostLine: 'First defeat: you knocked out {pct}% of the enemy base. Now you know where to push — try again.\n\n',
     almostLineNoDamage: "First defeat: your fighters didn't make it into the fight this time. Deploy them sooner next time — this isn't a punishment, just information.\n\n",
     freeUnitLine: '💪 The next battle starts with a free reinforcement.\n'
