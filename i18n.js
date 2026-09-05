@@ -54,7 +54,9 @@ const I18N = {
     upg_base_hp: 'HP базы',
     upg_damage_A: 'Урон бойца A',
     upg_damage_B: 'Урон стрелка B',
-    upg_damage_C: 'Урон щита C'
+    upg_damage_C: 'Урон щита C',
+    doorLabel: 'Скоро откроется: {role}',
+    doorReady: 'Готово к открытию!'
   },
   en: {
     title: 'Line Battle',
@@ -95,7 +97,9 @@ const I18N = {
     upg_base_hp: 'Base HP',
     upg_damage_A: 'Fighter A damage',
     upg_damage_B: 'Archer B damage',
-    upg_damage_C: 'Shield C damage'
+    upg_damage_C: 'Shield C damage',
+    doorLabel: 'Coming soon: {role}',
+    doorReady: 'Ready to unlock!'
   }
 };
 

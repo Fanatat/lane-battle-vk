@@ -44,11 +44,24 @@
     '#devPanel button.secondary{background:#5fd15f;}' +
     '#devPanel .hint{color:#888;font-size:11px;margin-top:4px;}';
 
+  // ТЗ блок 3a (RESTRUCTURE.md, критерий Б3a): панель есть в DOM ТОЛЬКО при
+  // ?debug=1, отсутствует без него — не просто visually hidden (класс
+  // .hidden), а физически удалена из дерева. dev.js всё равно не попадает
+  // в собранный архив (M-11, build.py: check_no_dev_leak) — этот гейт
+  // закрывает дыру только НЕСОБРАННОГО index.html (он в WHITELIST_COMMON,
+  // #devPanel — статичная разметка внутри него, значит виден всегда, если
+  // не убрать явно здесь).
+  var debugEnabled = new URLSearchParams(window.location.search).get('debug') === '1';
+  var panel = document.getElementById('devPanel');
+  if (!debugEnabled) {
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    return;
+  }
+
   var styleEl = document.createElement('style');
   styleEl.textContent = STYLE;
   document.head.appendChild(styleEl);
 
-  var panel = document.getElementById('devPanel');
   var visible = false;
 
   function waitForGame() {
@@ -67,6 +80,10 @@
     var statsBox = document.createElement('div');
     statsBox.className = 'stats';
     statsBox.innerHTML =
+      '<h2>Ощущения (ТЗ блок 3a, __feel)</h2>' +
+      '<div><span>Первое действие от загрузки</span><span id="devFirstInputMs">—</span></div>' +
+      '<div><span>Входов без отклика ≤100мс</span><span id="devNoResponseCount">0</span></div>' +
+      '<div><span>Всего входов записано</span><span id="devFeelInputs">0</span></div>' +
       '<h2>Статистика (живая)</h2>' +
       '<div><span>Время боя</span><span id="devTime">0</span></div>' +
       '<div><span>Заспавнено</span><span id="devSpawned">0</span></div>' +
@@ -291,11 +308,33 @@
     done(ok);
   }
 
+  // ТЗ блок 3a: критерий Б3a читается отсюда — "первое интерактивное
+  // действие ≤3с" и "счётчик входов без отклика ≤100мс = 0". Каждый 'input'
+  // должен найти хотя бы один 'fx' в окне [t, t+100мс] (main.js пушит fx в
+  // тот же синхронный тик, что и input, так что окно почти всегда 0-1мс).
+  function updateFeelStats() {
+    var feel = window.__feel;
+    var firstEl = document.getElementById('devFirstInputMs');
+    var noRespEl = document.getElementById('devNoResponseCount');
+    var totalEl = document.getElementById('devFeelInputs');
+    if (!feel || !firstEl) return;
+    firstEl.textContent = feel.firstInputAt !== null ? Math.round(feel.firstInputAt - feel.bootStart) + ' мс' : '— (ещё не было)';
+    var inputs = feel.events.filter(function (e) { return e.type === 'input'; });
+    var noResponse = 0;
+    inputs.forEach(function (inp) {
+      var responded = feel.events.some(function (fx) { return fx.type === 'fx' && fx.t >= inp.t && (fx.t - inp.t) <= 100; });
+      if (!responded) noResponse++;
+    });
+    noRespEl.textContent = noResponse;
+    totalEl.textContent = inputs.length;
+  }
+
   var statsTimer = null;
   function startStatsLoop() {
     if (statsTimer) return;
     statsTimer = setInterval(function () {
       if (!visible) return;
+      updateFeelStats();
       var s = window.Game.getState();
       var devTime = document.getElementById('devTime');
       if (!devTime || !s) return; // ТЗ №09: на экране меню/после выхода из боя движка ещё/уже нет

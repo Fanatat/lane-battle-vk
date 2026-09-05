@@ -128,10 +128,15 @@
     font-weight: 700; font-size: 14px; cursor: pointer;
   }
   #rewardedBonusBtn.hidden { display: none; }
+
+  /* ТЗ блок 3a: крючок дневного возврата больше не сидит взаперти внутри
+     стартового меню (меню больше не гейт запуска — см. main.js) — плавающий
+     чип поверх HUD, виден на любом экране (бой/попап/меню), когда доступен. */
   #dailyBonusBtn {
-    display: block; width: 100%; box-sizing: border-box; min-height: 44px; margin: 0 0 14px;
-    border-radius: 10px; border: 2px solid var(--border); background: var(--paper-panel-2);
-    color: var(--ink); font-weight: 700; font-size: 14px; cursor: pointer;
+    position: fixed; top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right));
+    z-index: 15; min-height: 40px; padding: 6px 14px; border-radius: 999px; border: 2px solid var(--border);
+    background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 13px; cursor: pointer;
+    box-shadow: 0 4px 14px var(--shadow);
   }
   #dailyBonusBtn.hidden { display: none; }
 
@@ -142,6 +147,42 @@
   #menuFeedback a { color: inherit; }
   #menuBadges { display: flex; justify-content: center; gap: 14px; margin-bottom: 20px; }
   #menuBadges canvas { width: 46px; height: 46px; }
+
+  /* ТЗ блок 3a, момент из ворот A (FUN_SPEC раздел 1): постоянно видимая
+     «дверь» — ближайшая заблокированная разблокировка, крупнее и заметнее
+     обычной строки магазина ниже. Сама покупка остаётся в существующей
+     строке магазина (#upgradeShop) — это не дублирующая кнопка, а витрина. */
+  #doorPanel {
+    display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 14px;
+    border-radius: 12px; border: 2px dashed var(--accent); background: var(--paper-panel-2);
+  }
+  #doorPanel.hidden { display: none; }
+  #doorPanel.ready { border-style: solid; animation: doorReadyPulse 1.4s ease-in-out infinite; }
+  #doorIconWrap { position: relative; flex: 0 0 auto; width: 56px; height: 56px; }
+  #doorIcon { width: 56px; height: 56px; display: block; filter: grayscale(0.5) brightness(0.75); }
+  #doorBars {
+    position: absolute; inset: 0; pointer-events: none; border-radius: 8px;
+    background: repeating-linear-gradient(90deg, rgba(43,39,35,0.55) 0 3px, transparent 3px 11px);
+  }
+  #doorLockBadge { position: absolute; right: -4px; bottom: -4px; font-size: 16px; }
+  #doorText { flex: 1 1 auto; text-align: left; min-width: 0; }
+  #doorLabel { font-size: 13px; font-weight: 700; color: var(--accent-ink); margin-bottom: 4px; }
+  #doorProgressTrack {
+    height: 8px; border-radius: 4px; background: var(--paper-bg); border: 1px solid var(--border);
+    overflow: hidden; margin-bottom: 3px;
+  }
+  #doorProgressFill { height: 100%; width: 0%; background: var(--accent); transition: width 300ms ease-out; }
+  #doorCount { font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  #doorPanel.opening { animation: doorOpenBurst 480ms ease-out; }
+  @keyframes doorOpenBurst {
+    0% { transform: scale(1); box-shadow: 0 0 0 rgba(193,104,47,0); }
+    35% { transform: scale(1.08); box-shadow: 0 0 22px rgba(193,104,47,0.65); }
+    100% { transform: scale(1); box-shadow: 0 0 0 rgba(193,104,47,0); }
+  }
+  @keyframes doorReadyPulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(193,104,47,0.35); }
+    50% { box-shadow: 0 0 14px rgba(193,104,47,0.65); }
+  }
 
   #upgradeShop { margin: 0 0 18px; max-height: 40vh; overflow-y: auto; text-align: left; }
   #upgradeShop h2 { font-size: 13px; color: var(--accent); margin: 10px 0 6px; }
@@ -217,6 +258,7 @@
     </div>
 
     <canvas id="game"></canvas>
+    <button id="dailyBonusBtn" class="hidden"></button>
 
     <div id="cards">
       <!-- ТЗ №22 п.1: физический ребёнок #cards (position:absolute,
@@ -247,7 +289,6 @@
            три касания дают всё управление: карточка спавнит юнита, кнопка
            скорости листает ×1/×2/×3, пауза сверху. -->
       <p id="menuHowToPlay" data-i18n="howToPlay">Тапни по карточке юнита внизу — он выйдет на полосу и будет сражаться сам. Кнопка ×1 наверху ускоряет бой, ⏸ — пауза.</p>
-      <button id="dailyBonusBtn" class="hidden"></button>
       <button id="playBtn">Играть</button>
       <!-- Требования площадки, п.6.1: адрес для обратной связи. ТЗ №19:
            только префикс переводится через data-i18n на <span> — mailto
@@ -270,6 +311,18 @@
       <h1 id="popupTitle">—</h1>
       <p id="popupStats"></p>
       <button id="rewardedBonusBtn" class="hidden"></button>
+      <div id="doorPanel" class="hidden">
+        <div id="doorIconWrap">
+          <canvas id="doorIcon" width="56" height="56"></canvas>
+          <div id="doorBars"></div>
+          <div id="doorLockBadge">🔒</div>
+        </div>
+        <div id="doorText">
+          <div id="doorLabel">—</div>
+          <div id="doorProgressTrack"><div id="doorProgressFill"></div></div>
+          <div id="doorCount">0/0</div>
+        </div>
+      </div>
       <div id="upgradeShop"></div>
       <button id="restartBtn">Ещё раз</button>
     </div>

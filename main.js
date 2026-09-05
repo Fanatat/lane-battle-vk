@@ -11,6 +11,32 @@
 
   var DMG_POOL_SIZE = 96;
   var SHOT_POOL_SIZE = 48;
+  var PARTICLE_POOL_SIZE = 64;
+
+  // ТЗ блок 3a (DETAILS §6): инструментация ощущений — событие входа
+  // ('input') + событие отклика ('fx') с временем performance.now(), плюс
+  // 'round_end'/'hook_shown' для критерия Б3b. Живёт на window, потому что
+  // и main.js, и dev.js (отдельный файл, отдельный <script>) читают её.
+  // bootStart — момент начала выполнения ЭТОГО скрипта (main.js — последний
+  // <script> перед </body>, без defer/async, значит грузится сразу после
+  // разбора HTML) — приближение «от загрузки страницы», не от навигации.
+  (function initFeel() {
+    var bootStart = performance.now();
+    window.__feel = {
+      bootStart: bootStart,
+      firstInputAt: null,
+      events: [],
+      push: function (e) {
+        e.t = typeof e.t === 'number' ? e.t : performance.now();
+        this.events.push(e);
+        if (e.type === 'input' && this.firstInputAt === null) {
+          this.firstInputAt = e.t;
+          console.log('[__feel] первое интерактивное действие: ' + Math.round(e.t - this.bootStart) + ' мс от начала загрузки main.js (критерий Б3a: ≤3000 мс)');
+        }
+        if (this.events.length > 400) this.events.shift();
+      }
+    };
+  })();
 
   var baseBalance = null; // сырой balance.json, не мутируется
   var battleBalance = null; // ТЗ №08: собран campaign.js под текущую битву (апгрейды + сложность)
@@ -36,6 +62,8 @@
   // движка (juice, не бой), обнуляются при пересоздании движка в startBattle().
   var prevBaseDefCooldown = { player: 0, enemy: 0 };
   var baseDefFlashMs = { player: 0, enemy: 0 };
+  var victoryFlashMs = 0; // единственный "большой" момент раунда (раздел 5 FUN_SPEC) — лёгкая вспышка экрана на победе
+  var deathBurstCountThisBattle = 0; // "средний" момент раздела 5: капается через balance.juice.death_burst_max_per_battle
 
   // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
   // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
@@ -95,6 +123,134 @@
 
   var shots = makeShotPool(SHOT_POOL_SIZE);
 
+  // ---------------- particles (иерархия отклика: средний/большой момент) ----------------
+
+  function makeParticlePool(size) {
+    var arr = new Array(size);
+    for (var i = 0; i < size; i++) {
+      arr[i] = { active: false, x: 0, y: 0, vx: 0, vy: 0, age: 0, maxAge: 0, size: 0, color: '' };
+    }
+    return arr;
+  }
+
+  var particles = makeParticlePool(PARTICLE_POOL_SIZE);
+
+  function findFreeParticle() {
+    for (var i = 0; i < particles.length; i++) {
+      if (!particles[i].active) return particles[i];
+    }
+    return particles[0]; // пул исчерпан — переиспользуем старейший, не new
+  }
+
+  function spawnBurst(x, y, count, colors, maxAgeMs) {
+    for (var i = 0; i < count; i++) {
+      var p = findFreeParticle();
+      var ang = Math.random() * Math.PI * 2;
+      var spd = 60 + Math.random() * 140;
+      p.active = true; p.x = x; p.y = y;
+      p.vx = Math.cos(ang) * spd; p.vy = Math.sin(ang) * spd - 40;
+      p.age = 0; p.maxAge = (maxAgeMs / 1000) * (0.7 + Math.random() * 0.6);
+      p.size = 2 + Math.random() * 3;
+      p.color = colors[Math.floor(Math.random() * colors.length)];
+    }
+  }
+
+  function tickParticle(p, realDt) {
+    if (!p.active) return;
+    p.age += realDt;
+    p.x += p.vx * realDt;
+    p.y += p.vy * realDt;
+    p.vy += 260 * realDt; // лёгкая гравитация, px/s^2
+    if (p.age >= p.maxAge) p.active = false;
+  }
+
+  function drawParticle(p) {
+    if (!p.active) return;
+    var frac = 1 - p.age / p.maxAge;
+    ctx.globalAlpha = Math.max(0, frac);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * Math.max(0.25, frac), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------- звук (WebAudio, синтез — без внешних файлов/CDN) ----------------
+  // ТЗ блок 3a (DETAILS §6 просит готовые сэмплы freesound/Kenney): решение
+  // исполнителя — синтез осцилляторами вместо подбора и лицензирования
+  // конкретных сэмплов в рамках сессии (риск угадать неверный URL/лицензию
+  // без интернет-доступа к каталогу). Открытый пункт — в NOTES.md.
+  var audioCtx = null;
+  function getAudioCtx() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  function playTone(freq, durMs, waveType, gainPeak, pitchVariation) {
+    var ac = getAudioCtx();
+    if (!ac) return;
+    var f = freq * (1 + (Math.random() * 2 - 1) * (pitchVariation || 0));
+    var osc = ac.createOscillator();
+    var gain = ac.createGain();
+    osc.type = waveType;
+    osc.frequency.value = f;
+    var now = ac.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(gainPeak, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durMs / 1000);
+    osc.connect(gain).connect(ac.destination);
+    osc.start(now);
+    osc.stop(now + durMs / 1000 + 0.02);
+  }
+  function playChord(freqs, durMs, gainPeakTotal) {
+    freqs.forEach(function (f) { playTone(f, durMs, 'triangle', gainPeakTotal / freqs.length, 0); });
+  }
+  function playSpawnSound() { playTone(520, 90, 'square', 0.05, battleBalance.juice.sound_pitch_variation); }
+  function playDeniedSound() { playTone(160, 90, 'square', 0.04, 0.05); }
+  var lastHitSoundAt = 0;
+  function playHitSound() {
+    // Троттлинг заменяет "тише при частых ударах подряд" (раздел 5 FUN_SPEC) —
+    // при быстрой очереди ударов лишние вызовы просто не звучат, а не тише.
+    var now = performance.now();
+    if (now - lastHitSoundAt < 90) return;
+    lastHitSoundAt = now;
+    playTone(140, 100, 'sine', 0.03, 0.08);
+  }
+  function playVictorySound() { playChord([392, 494, 587], 500, 0.1); }
+  function playDeathBurstSound() { playTone(180, 160, 'sawtooth', 0.045, 0.05); }
+  function playDoorOpenSound() {
+    playTone(660, 140, 'triangle', 0.07, 0);
+    setTimeout(function () { playTone(880, 220, 'triangle', 0.07, 0); }, 90);
+  }
+
+  // ---------------- средний/большой момент раунда (раздел 5 FUN_SPEC) ----------------
+
+  // "Средний" момент — 2-3 на раунд, только на ключевых (не самых дешёвых)
+  // юнитах: капается через balance.juice.death_burst_max_per_battle, чтобы
+  // не превратиться в фоновый шум при массовой резне дешёвых бойцов A.
+  function handleUnitDeath(target) {
+    if (target.type === 'A') return;
+    if (deathBurstCountThisBattle >= battleBalance.juice.death_burst_max_per_battle) return;
+    deathBurstCountThisBattle++;
+    var px = window.LaneEngine.logicalToPx(layout, target.x);
+    spawnBurst(px, target.y, battleBalance.juice.death_burst_particles, [battleBalance.juice.death_burst_color], battleBalance.juice.death_burst_ms);
+    playDeathBurstSound();
+  }
+
+  // "Большой" момент — один на раунд (раздел 5: hit-stop+shake уже даёт
+  // engine.js на разрушении базы; здесь — то, что движку не принадлежит:
+  // частицы, вспышка экрана, звук). Только на ПОБЕДЕ (не на поражении —
+  // anti-frustration раздела 6: первый проигрыш подаётся как "почти", не
+  // как повод для фейерверка).
+  function triggerVictoryFx() {
+    var b = layout.enemyBase;
+    spawnBurst(b.x + b.w / 2, b.y + b.h / 2, battleBalance.juice.victory_burst_particles, battleBalance.juice.victory_burst_colors, battleBalance.juice.victory_burst_ms);
+    victoryFlashMs = battleBalance.juice.victory_flash_ms;
+    playVictorySound();
+  }
+
   // ---------------- loading ----------------
 
   fetch('balance.json', { cache: 'no-store' })
@@ -136,7 +292,11 @@
       // этого вызова заголовок остаётся русским на EN до старта первой
       // битвы — обновляем сразу, как только язык и campaignState известны.
       updateCampaignHud();
-      showMenu();
+      // ТЗ блок 3a (RESTRUCTURE.md, FUN_SPEC раздел 0/1): "старт = геймплей
+      // ≤3с, без меню и текстового туториала" — бой начинается сразу, меню
+      // (playBtn/howToPlay) остаётся доступно только как явный возврат
+      // через паузу (exitToMenu), не как гейт первого запуска.
+      startBattle();
       Platform.gameReady();
       updateBuildBadge();
     })
@@ -205,12 +365,22 @@
     battleBalance = window.LaneCampaign.buildBattleBalance(baseBalance, campaignState, campaignState.battleNumber);
     for (var k = 0; k < dmgNumbers.length; k++) dmgNumbers[k].active = false;
     for (var m = 0; m < shots.length; m++) shots[m].active = false;
+    for (var pp = 0; pp < particles.length; pp++) particles[pp].active = false;
     prevBaseDefCooldown.player = 0; prevBaseDefCooldown.enemy = 0;
     baseDefFlashMs.player = 0; baseDefFlashMs.enemy = 0;
+    victoryFlashMs = 0;
+    deathBurstCountThisBattle = 0;
     resize();
     engine = window.LaneEngine.createEngine(battleBalance, layout, {
-      onDamage: function (logicalX, y, value) { spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value); },
-      onBaseDestroyed: showPopup,
+      onDamage: function (logicalX, y, value) {
+        spawnDamageNumber(window.LaneEngine.logicalToPx(layout, logicalX), y, value);
+        playHitSound();
+      },
+      onKill: function (target) { handleUnitDeath(target); },
+      onBaseDestroyed: function (result) {
+        if (result === 'WIN') triggerVictoryFx();
+        showPopup(result);
+      },
       onRangedShot: function (fromX, fromY, toX, toY) {
         spawnShot(window.LaneEngine.logicalToPx(layout, fromX), fromY, window.LaneEngine.logicalToPx(layout, toX), toY);
       }
@@ -222,6 +392,7 @@
     updateCardLocks();
     updateCampaignHud();
     updateHud();
+    updateDailyBonusButton(); // теперь плавающий чип поверх HUD, не часть меню — виден и во время боя
   }
 
   // ---------------- menu / pause (ТЗ №09) ----------------
@@ -296,7 +467,18 @@
   }
 
   function trySpawnFromCard(type) {
-    if (!engine.trySpawnFood(type)) shakeCard(type);
+    window.__feel.push({ type: 'input', name: 'spawn:' + type });
+    var ok = engine.trySpawnFood(type);
+    if (ok) {
+      playSpawnSound();
+    } else {
+      shakeCard(type);
+      playDeniedSound();
+    }
+    // Отклик синхронный (тот же тик, что и вход) — squash (engine.js) или
+    // тряска карточки уже произошли к этой строке, дельта t ~0мс, с запасом
+    // укладывается в критерий Б3a (≤100мс).
+    window.__feel.push({ type: 'fx', name: (ok ? 'squash:' : 'card_shake:') + type });
   }
 
   // ---------------- juice ----------------
@@ -344,6 +526,7 @@
     for (var j = 0; j < enemyUnits.length; j++) tickUnitAnim(enemyUnits[j], realDt);
     for (var k = 0; k < dmgNumbers.length; k++) tickDamageNumber(dmgNumbers[k], realDt);
     for (var m = 0; m < shots.length; m++) tickShot(shots[m], realDt);
+    for (var p = 0; p < particles.length; p++) tickParticle(particles[p], realDt);
 
     updateHud();
   }
@@ -368,6 +551,7 @@
     prevBaseDefCooldown.enemy = state.enemyBaseDefCooldown;
     if (baseDefFlashMs.player > 0) baseDefFlashMs.player = Math.max(0, baseDefFlashMs.player - realDt * 1000);
     if (baseDefFlashMs.enemy > 0) baseDefFlashMs.enemy = Math.max(0, baseDefFlashMs.enemy - realDt * 1000);
+    if (victoryFlashMs > 0) victoryFlashMs = Math.max(0, victoryFlashMs - realDt * 1000);
   }
 
   function tickUnitAnim(u, realDt) {
@@ -436,8 +620,20 @@
     for (var j = 0; j < enemyUnits.length; j++) drawUnit(enemyUnits[j], battleBalance.sides.enemy, false);
     for (var m = 0; m < shots.length; m++) drawShot(shots[m]);
     for (var k = 0; k < dmgNumbers.length; k++) drawDamageNumber(dmgNumbers[k]);
+    for (var p = 0; p < particles.length; p++) drawParticle(particles[p]);
 
     ctx.restore();
+
+    // Вспышка экрана (раздел 5 FUN_SPEC, "большой" момент) — рисуется ПОСЛЕ
+    // ctx.restore(), вне тряски камеры (shakeX/shakeY), поверх всего кадра.
+    if (victoryFlashMs > 0) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = Math.max(0, Math.min(0.55, (victoryFlashMs / battleBalance.juice.victory_flash_ms) * 0.55));
+      ctx.fillStyle = battleBalance.juice.victory_flash_color;
+      ctx.fillRect(0, 0, layout.w, layout.h);
+      ctx.restore();
+    }
   }
 
   // ТЗ №15, блок 4: башня/частокол вместо прежнего тематического укрепления
@@ -707,6 +903,11 @@
   var battleLabelEl = document.getElementById('battleLabel');
   var trophyValueEl = document.getElementById('trophyValue');
   var upgradeShopEl = document.getElementById('upgradeShop');
+  var doorPanelEl = document.getElementById('doorPanel');
+  var doorIconEl = document.getElementById('doorIcon');
+  var doorLabelEl = document.getElementById('doorLabel');
+  var doorProgressFillEl = document.getElementById('doorProgressFill');
+  var doorCountEl = document.getElementById('doorCount');
 
   function updateHud() {
     var state = engine.getState();
@@ -812,6 +1013,7 @@
   }
 
   function showPopup(result) {
+    window.__feel.push({ type: 'round_end', name: result });
     var state = engine.getState();
     var won = result === 'WIN';
     var gained = window.LaneCampaign.reward(baseBalance, campaignState.battleNumber, won);
@@ -839,8 +1041,57 @@
       t('statsGained').replace('{icon}', baseBalance.campaign.currency_icon).replace('{n}', gained).replace('{total}', campaignState.trophies);
     setupRewardedBonusButton(gained);
     buildUpgradeShop();
+    updateDoorPanel();
     restartBtnEl.textContent = t('restartNext').replace('{n}', campaignState.battleNumber + 1);
     popupEl.classList.remove('hidden');
+  }
+
+  // ---------------- дверь (момент из ворот A, FUN_SPEC раздел 1) ----------------
+  // Постоянно видимая на экране между боями ближайшая заблокированная
+  // разблокировка — силуэт юнита за "решёткой" и прогресс к цене в трофеях,
+  // поверх уже существующего магазина апгрейдов (FUN_SPEC раздел 8, п.1/3).
+  // Сама покупка остаётся в строке магазина ниже — дверь ничего не дублирует.
+  var DOOR_ORDER = ['unlock_B', 'unlock_C']; // порядок графа разблокировок ТЗ №08
+  var UNLOCK_UNIT_LETTER = { unlock_B: 'B', unlock_C: 'C' };
+
+  function nextLockedUnlockKey() {
+    for (var i = 0; i < DOOR_ORDER.length; i++) {
+      if (!campaignState.unlocked[DOOR_ORDER[i]]) return DOOR_ORDER[i];
+    }
+    return null; // все открыты — честно скрываем дверь, не выдумываем контент дальше (FUN_SPEC: плейсхолдер = баг)
+  }
+
+  function updateDoorPanel() {
+    var key = nextLockedUnlockKey();
+    if (!key) {
+      doorPanelEl.classList.add('hidden');
+      return;
+    }
+    var def = baseBalance.campaign.unlocks[key];
+    var letter = UNLOCK_UNIT_LETTER[key];
+    var have = campaignState.trophies;
+    var cost = def.cost;
+    var frac = cost > 0 ? Math.max(0, Math.min(1, have / cost)) : 1;
+    doorLabelEl.textContent = t('doorLabel').replace('{role}', t('role' + letter));
+    doorProgressFillEl.style.width = (frac * 100) + '%';
+    doorCountEl.textContent = frac >= 1
+      ? t('doorReady')
+      : (Math.min(have, cost) + ' / ' + cost + ' ' + baseBalance.campaign.currency_icon);
+    drawIconCanvas(doorIconEl, baseBalance.units[letter].shape, baseBalance.sides.player);
+    doorPanelEl.classList.remove('hidden');
+    doorPanelEl.classList.toggle('ready', frac >= 1);
+    window.__feel.push({ type: 'hook_shown', name: 'door:' + key });
+  }
+
+  // "Большой", редкий момент (реже раза в раунд) — реальное открытие
+  // разблокировки, отдельное от звука/анимации победы (FUN_SPEC раздел 0:
+  // "кнопка обязана визуально/текстово отличаться" — здесь тот же принцип
+  // применён к открытию двери, не к денежной гипотезе блока 4).
+  function triggerDoorOpenFx() {
+    doorPanelEl.classList.remove('opening');
+    void doorPanelEl.offsetWidth; // restart CSS animation
+    doorPanelEl.classList.add('opening');
+    playDoorOpenSound();
   }
 
   // ТЗ №11: rewarded — бонус ПОВЕРХ обычной награды, не вместо (R-09: база
@@ -891,7 +1142,7 @@
       var locked = def.requires && !campaignState.unlocked[def.requires];
       upgradeShopEl.appendChild(buildShopRow(
         t('upg_' + key), locked ? t('needsUnlock').replace('{label}', t('upg_' + def.requires)) : '',
-        def.cost, canBuy, function () { buyAndRefresh(function () { return window.LaneCampaign.buyUnlock(campaign, key, campaignState); }); }
+        def.cost, canBuy, function () { buyUnlockAndRefresh(key); }
       ));
     });
 
@@ -931,8 +1182,18 @@
     if (action()) {
       updateCampaignHud();
       buildUpgradeShop();
+      updateDoorPanel();
       persist();
     }
+  }
+
+  // Обёртка ТОЛЬКО для разблокировок (не апгрейдов) — ловит переход
+  // locked → unlocked, чтобы дать открытию двери отдельный "большой" момент
+  // (раздел 5 FUN_SPEC), а не молча переехать на следующую цель.
+  function buyUnlockAndRefresh(key) {
+    var wasUnlocked = campaignState.unlocked[key];
+    buyAndRefresh(function () { return window.LaneCampaign.buyUnlock(baseBalance.campaign, key, campaignState); });
+    if (!wasUnlocked && campaignState.unlocked[key]) triggerDoorOpenFx();
   }
 
   // Требования площадки, п.1.6.1.1/1.6.3.1: доступен полноэкранный режим.

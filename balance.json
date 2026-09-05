@@ -304,7 +304,18 @@
     "card_shake_ms": 150,
     "ranged_shot_ms": 80,
     "ranged_shot_color": "rgba(193,104,47,0.85)",
-    "base_def_flash_ms": 180
+    "base_def_flash_ms": 180,
+    "death_burst_particles": 10,
+    "death_burst_ms": 260,
+    "death_burst_max_per_battle": 3,
+    "death_burst_color": "#746a58",
+    "victory_burst_particles": 44,
+    "victory_burst_ms": 420,
+    "victory_burst_colors": ["#c1682f", "#eee0bf", "#6f8f45"],
+    "victory_flash_ms": 220,
+    "victory_flash_color": "#fff1c7",
+    "sound_pitch_variation": 0.1,
+    "door_open_flash_ms": 260
   },
   "campaign": {
     "_comment": "ТЗ №08. Трофеи — валюта забега, копится по битвам, не обнуляется между битвами в рамках сессии (сейв — фаза 10). Сложность растёт ТОЛЬКО через частоту волн (schedule_time_mult) — не через характеристики врага: balance.units общий для игрока и врага (см. ГРАФ_РАЗБЛОКИРОВОК_ТЗ08.md, BLOCKERS.md п.12-13). Стоимость апгрейда уровня N = cost_base × N.",
