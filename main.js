@@ -65,6 +65,10 @@
   var victoryFlashMs = 0; // единственный "большой" момент раунда (раздел 5 FUN_SPEC) — лёгкая вспышка экрана на победе
   var deathBurstCountThisBattle = 0; // "средний" момент раздела 5: капается через balance.juice.death_burst_max_per_battle
 
+  // ---- Блок 3b, anti-frustration (FUN_SPEC раздел 6) ----
+  var pendingFreeUnitBonus = false; // выдан попапом ПРЕДЫДУЩЕЙ битвы (3 проигрыша подряд), применяется в startBattle()
+  var lastInteractionAt = 0; // performance.now() последней попытки спавна — для idle-подсказки
+
   // ТЗ №15, блок 3: анимация процедурная от состояния движка, не своих
   // таймеров — фаза ходьбы берётся от логической координаты юнита (детер-
   // министично, без дрейфа), замах — от cooldown относительно attack_speed.
@@ -393,6 +397,40 @@
     updateCampaignHud();
     updateHud();
     updateDailyBonusButton(); // теперь плавающий чип поверх HUD, не часть меню — виден и во время боя
+    lastInteractionAt = performance.now(); // блок 3b: idle-таймер считает от начала боя, не от загрузки страницы
+    clearIdleHint();
+    grantPendingFreeUnitIfAny();
+  }
+
+  // Блок 3b, FUN_SPEC раздел 6: "проиграл 3 раза подряд → следующий бой
+  // гарантированно чуть легче ... игроку выдаётся один бесплатный
+  // дополнительный юнит на старте боя". Игрок уже предупреждён об этом в
+  // попапе предыдущей битвы (freeUnitLine) — здесь только сама выдача,
+  // без повторного тоста (не дублируем хук). engine.spawnPlayer() бесплатен
+  // (не списывает еду, engine.js) — сила юнита масштабируется ЗДЕСЬ, в
+  // main.js, мутацией уже созданного слота (не трогаем engine.js: движок
+  // не знает о "бонусных" юнитах, раздел 7 параметр — HP-множитель, не
+  // новая механика урона).
+  function grantPendingFreeUnitIfAny() {
+    if (!pendingFreeUnitBonus) return;
+    pendingFreeUnitBonus = false;
+    var type = cheapestUnlockedType();
+    if (!type) return;
+    var slot = engine.spawnPlayer(type);
+    if (!slot) return;
+    var mult = battleBalance.campaign.anti_frustration.free_unit_strength_mult;
+    slot.hp = slot.hp * mult;
+    slot.maxHp = slot.maxHp * mult;
+  }
+
+  function cheapestUnlockedType() {
+    var best = null;
+    ['A', 'B', 'C'].forEach(function (type) {
+      if (!battleBalance.campaignUnlocked[type]) return;
+      var cost = battleBalance.units[type].cost;
+      if (best === null || cost < best.cost) best = { type: type, cost: cost };
+    });
+    return best ? best.type : null;
   }
 
   // ---------------- menu / pause (ТЗ №09) ----------------
@@ -468,6 +506,8 @@
 
   function trySpawnFromCard(type) {
     window.__feel.push({ type: 'input', name: 'spawn:' + type });
+    lastInteractionAt = performance.now(); // блок 3b: любая попытка спавна (успешная или нет) снимает idle-подсказку
+    clearIdleHint();
     var ok = engine.trySpawnFood(type);
     if (ok) {
       playSpawnSound();
@@ -491,6 +531,39 @@
     // eslint-disable-next-line no-unused-expressions
     void el.offsetWidth; // restart CSS animation
     el.classList.add('shake');
+  }
+
+  // ---- Блок 3b, FUN_SPEC раздел 6: idle-подсказка ----
+  // "Бездействие 5–8 с (не тратит еду при достаточном запасе) →
+  // idle-подсказка: пульсация самой дешёвой доступной карточки юнита, без
+  // текста." Дешевле — здесь означает "открыта в кампании И по карману
+  // прямо сейчас", иначе подсказывать нечего (закон "не костыль").
+  var idleHintType = null;
+  function clearIdleHint() {
+    if (idleHintType === null) return;
+    var el = cardEls[idleHintType];
+    if (el) el.classList.remove('idleHint');
+    idleHintType = null;
+  }
+  function setIdleHint(type) {
+    if (idleHintType === type) return;
+    clearIdleHint();
+    idleHintType = type;
+    cardEls[type].classList.add('idleHint');
+  }
+  function updateIdleHint(state) {
+    if (state.over) { clearIdleHint(); return; }
+    var af = battleBalance.campaign.anti_frustration;
+    var idleS = (performance.now() - lastInteractionAt) / 1000;
+    if (idleS < af.idle_hint_delay_s) { clearIdleHint(); return; }
+    var best = null;
+    ['A', 'B', 'C'].forEach(function (type) {
+      if (!battleBalance.campaignUnlocked[type]) return;
+      var cost = battleBalance.units[type].cost;
+      if (state.food < cost) return;
+      if (best === null || cost < best.cost) best = { type: type, cost: cost };
+    });
+    if (best) setIdleHint(best.type); else clearIdleHint();
   }
 
   // ---------------- main loop ----------------
@@ -529,6 +602,7 @@
     for (var p = 0; p < particles.length; p++) tickParticle(particles[p], realDt);
 
     updateHud();
+    updateIdleHint(state);
   }
 
   function updateJuiceTimers(realDt) {
@@ -898,6 +972,7 @@
   var cardEls = { A: document.getElementById('card-A'), B: document.getElementById('card-B'), C: document.getElementById('card-C') };
   var popupEl = document.getElementById('popup');
   var popupTitleEl = document.getElementById('popupTitle');
+  var popupRewardEl = document.getElementById('popupReward');
   var popupStatsEl = document.getElementById('popupStats');
   var restartBtnEl = document.getElementById('restartBtn');
   var battleLabelEl = document.getElementById('battleLabel');
@@ -1012,12 +1087,33 @@
     el.classList.remove('hidden');
   }
 
+  // Блок 3b, DETAILS §6: "экран конца раунда ≤1с с бегущими цифрами" —
+  // считает от `from` до `to` easeOutCubic за durationMs, не блокирует
+  // ничего вокруг (rAF, не await) — сам попап уже показан к моменту вызова.
+  function animateCountUp(el, from, to, durationMs, formatFn) {
+    var start = performance.now();
+    function tick(now) {
+      var frac = Math.min(1, (now - start) / durationMs);
+      var eased = 1 - Math.pow(1 - frac, 3);
+      var val = Math.round(from + (to - from) * eased);
+      el.textContent = formatFn(val);
+      if (frac < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
   function showPopup(result) {
     window.__feel.push({ type: 'round_end', name: result });
     var state = engine.getState();
     var won = result === 'WIN';
     var gained = window.LaneCampaign.reward(baseBalance, campaignState.battleNumber, won);
     campaignState.trophies += gained;
+
+    // Блок 3b, FUN_SPEC раздел 6 (anti-frustration) — мутирует campaignState
+    // (consecutiveLosses/firstLossShown), ДО persist(), чтобы сейв нёс
+    // актуальное состояние серии проигрышей.
+    var outcome = window.LaneCampaign.recordBattleOutcome(baseBalance.campaign, campaignState, won);
+    if (outcome.grantFreeUnit) pendingFreeUnitBonus = true;
 
     // Закон 9/K-18: финал-событие. Кампания бесконечна (N-08) — это не
     // "конец игры" (не обещаем того, чего нет, K-26), а рубеж по НОМЕРУ
@@ -1030,15 +1126,26 @@
     updateCampaignHud();
     persist();
 
+    // Первый проигрыш когда-либо ("почти") НЕ переименовывает заголовок в
+    // "почти" на пустом месте (было бы нечестно при разгромном счёте) —
+    // остаётся честным "Поражение", информация — отдельной строкой ниже с
+    // реальным % снесённого здоровья базы врага.
     popupTitleEl.textContent = won ? t('win') : t('lose');
     var seconds = state.timeElapsed.toFixed(1);
+    var almostPct = won ? 0 : Math.round((1 - state.enemyBaseHp / state.enemyBaseMaxHp) * 100);
     popupStatsEl.textContent =
       (reachedMilestone ? t('milestoneLine').replace('{n}', campaignState.battleNumber) : '') +
+      (outcome.almostFirstLoss ? (almostPct > 0 ? t('almostLine').replace('{pct}', almostPct) : t('almostLineNoDamage')) : '') +
+      (outcome.grantFreeUnit ? t('freeUnitLine') : '') +
       t('battleLabel').replace('{n}', campaignState.battleNumber) + '\n' +
       t('statsDuration').replace('{s}', seconds) + '\n' +
       t('statsSpawned').replace('{n}', state.spawnedCount) + '\n' +
       t('statsKilled').replace('{n}', state.killedCount) + '\n' +
       t('statsGained').replace('{icon}', baseBalance.campaign.currency_icon).replace('{n}', gained).replace('{total}', campaignState.trophies);
+    popupRewardEl.classList.remove('hidden');
+    var icon = baseBalance.campaign.currency_icon;
+    popupRewardEl.textContent = '+0 ' + icon;
+    animateCountUp(popupRewardEl, 0, gained, battleBalance.juice.reward_countup_ms, function (v) { return '+' + v + ' ' + icon; });
     setupRewardedBonusButton(gained);
     buildUpgradeShop();
     updateDoorPanel();

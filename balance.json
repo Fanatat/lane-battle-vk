@@ -315,7 +315,8 @@
     "victory_flash_ms": 220,
     "victory_flash_color": "#fff1c7",
     "sound_pitch_variation": 0.1,
-    "door_open_flash_ms": 260
+    "door_open_flash_ms": 260,
+    "reward_countup_ms": 500
   },
   "campaign": {
     "_comment": "ТЗ №08. Трофеи — валюта забега, копится по битвам, не обнуляется между битвами в рамках сессии (сейв — фаза 10). Сложность растёт ТОЛЬКО через частоту волн (schedule_time_mult) — не через характеристики врага: balance.units общий для игрока и врага (см. ГРАФ_РАЗБЛОКИРОВОК_ТЗ08.md, BLOCKERS.md п.12-13). Стоимость апгрейда уровня N = cost_base × N.",
@@ -353,6 +354,12 @@
       "bonus_trophies": 15,
       "streak_decay_on_miss": 1
     },
-    "milestone_battle": 15
+    "milestone_battle": 15,
+    "anti_frustration": {
+      "_comment": "RESTRUCTURE блок 3b, FUN_SPEC раздел 6/7. loss_streak_threshold — проигрышей подряд до бесплатного юнита на старте следующей битвы (сбрасывается после выдачи, не копится дальше). free_unit_strength_mult — раздел 7, ползунок 0.5-1.5 (масштабирует HP бесплатного юнита, main.js). idle_hint_delay_s — секунд бездействия (нет попытки спавна) до pulse-подсказки самой дешёвой доступной карточки.",
+      "loss_streak_threshold": 3,
+      "free_unit_strength_mult": 1.0,
+      "idle_hint_delay_s": 6
+    }
   }
 }

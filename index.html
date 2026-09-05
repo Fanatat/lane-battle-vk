@@ -88,6 +88,14 @@
     80% { transform: translateX(4px); }
     100% { transform: translateX(0); }
   }
+  /* Блок 3b, FUN_SPEC раздел 6: idle-подсказка — "пульсация самой дешёвой
+     доступной карточки юнита, без текста" — тот же приём палитры, что
+     doorReadyPulse ниже (один стиль ассетов). */
+  .card.idleHint { animation: idleHintPulse 1.1s ease-in-out infinite; }
+  @keyframes idleHintPulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(193,104,47,0); }
+    50% { box-shadow: 0 0 14px rgba(193,104,47,0.7); }
+  }
 
   /* ТЗ №20 (QA-баг 1, тот же класс, что отказ Яндекса Color Sort п.1.10.1,
      см. docs/02_ЖУРНАЛ.txt): было justify-content:center на контейнере —
@@ -111,10 +119,27 @@
     border: 1px solid var(--border); margin: auto 0; flex: 0 0 auto;
   }
   #popupTitle, #pauseTitle { margin: 0 0 12px; font-size: 28px; }
+  /* Блок 3b: "бегущие цифры" — награда битвы, крупно, отдельно от прочей
+     статистики (та остаётся текстом ниже, как раньше). font-variant-numeric
+     держит ширину цифр стабильной, пока main.js считает 0 → gained. */
+  #popupReward {
+    display: inline-block; margin: 0 0 14px; padding: 6px 16px; border-radius: 10px;
+    background: var(--paper-panel-2); border: 1px solid var(--border);
+    font-size: 22px; font-weight: 700; color: var(--accent-ink); font-variant-numeric: tabular-nums;
+  }
+  #popupReward.hidden { display: none; }
   #popupStats { margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: var(--ink-soft); white-space: pre-line; }
   #restartBtn, #playBtn, #pauseResumeBtn {
     min-width: 160px; min-height: 48px; border-radius: 10px; border: none;
     background: var(--success); color: var(--success-ink); font-weight: 700; font-size: 17px; cursor: pointer;
+  }
+  /* Блок 3b: хук "незавершённое желание" — кнопка возврата в петлю
+     пульсирует (DETAILS §6). Мягко, не конкурирует с "большим" моментом
+     раздела 5 (та вспышка — на канвасе, эта — в DOM, разные слои). */
+  #restartBtn { animation: restartPulse 1.7s ease-in-out infinite; }
+  @keyframes restartPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(111,143,69,0); }
+    50% { transform: scale(1.035); box-shadow: 0 0 16px rgba(111,143,69,0.55); }
   }
   #pauseMenuBtn {
     min-width: 160px; min-height: 44px; border-radius: 10px; border: 2px solid var(--border);
@@ -130,13 +155,19 @@
   #rewardedBonusBtn.hidden { display: none; }
 
   /* ТЗ блок 3a: крючок дневного возврата больше не сидит взаперти внутри
-     стартового меню (меню больше не гейт запуска — см. main.js) — плавающий
-     чип поверх HUD, виден на любом экране (бой/попап/меню), когда доступен. */
+     стартового меню (меню больше не гейт запуска — см. main.js). Блок 3b,
+     живой тест: старое position:fixed (top-right) физически перекрывало
+     #speedBtn/#pauseBtn/#fullscreenBtn на всех проверенных альбомных
+     размерах (десктоп и телефон) — кнопки становились некликабельными,
+     пока чип виден. Структурный фикс (тот же приём, что #buildBadge, ТЗ
+     №22): чип теперь ребёнок #topBarRight, флекс сам резервирует место —
+     перекрытие невозможно ни при каком размере экрана. z-index/fixed
+     больше не нужны — видимость (не показывается поверх попапа/меню,
+     z-index 20 > этого) не изменилась, чип и раньше их не перекрывал. */
   #dailyBonusBtn {
-    position: fixed; top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right));
-    z-index: 15; min-height: 40px; padding: 6px 14px; border-radius: 999px; border: 2px solid var(--border);
-    background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 13px; cursor: pointer;
-    box-shadow: 0 4px 14px var(--shadow);
+    order: -1; min-height: 36px; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--border);
+    background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 12px; cursor: pointer;
+    white-space: nowrap;
   }
   #dailyBonusBtn.hidden { display: none; }
 
@@ -251,6 +282,7 @@
         <div id="foodBarTrack"><div id="foodBarFill"></div></div>
       </div>
       <div id="topBarRight">
+        <button id="dailyBonusBtn" class="hidden"></button>
         <button id="fullscreenBtn" class="hidden">⛶</button>
         <button id="pauseBtn">⏸</button>
         <button id="speedBtn">×1</button>
@@ -258,7 +290,6 @@
     </div>
 
     <canvas id="game"></canvas>
-    <button id="dailyBonusBtn" class="hidden"></button>
 
     <div id="cards">
       <!-- ТЗ №22 п.1: физический ребёнок #cards (position:absolute,
@@ -309,6 +340,7 @@
   <div id="popup" class="hidden">
     <div id="popupBox">
       <h1 id="popupTitle">—</h1>
+      <div id="popupReward" class="hidden">+0</div>
       <p id="popupStats"></p>
       <button id="rewardedBonusBtn" class="hidden"></button>
       <div id="doorPanel" class="hidden">

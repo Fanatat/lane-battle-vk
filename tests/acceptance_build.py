@@ -163,7 +163,9 @@ def smoke_dist(build_dir_name, port, mock_route, wait_ms=800):
                     content_type='application/javascript', body=mock_route['body']))
             page2.goto(f'http://127.0.0.1:{port}/index.html')
             page2.wait_for_timeout(wait_ms)
-            page2.click('#playBtn')
+            # Блок 3a (RESTRUCTURE.md): старт = геймплей сразу, без меню-гейта
+            # — #playBtn больше не часть флоу первого запуска (кнопка теперь
+            # только явный возврат из паузы), клика по ней здесь не требуется.
             page2.wait_for_timeout(500)
             badge_text = page2.eval_on_selector('#buildBadge', 'el => el.textContent')
             battle_visible = page2.eval_on_selector('#menuScreen', 'el => el.classList.contains("hidden")')
@@ -194,7 +196,11 @@ def main():
     smoke_dist('lanebattler_yandex_unzipped', 8799, {
         'pattern': '**/sdk.js', 'body': YA_MOCK_JS,
     })
-    smoke_dist('lanebattler_vk', 8800, None)  # vk-bridge.min.js уже локальный файл — мок не нужен для смоука дев-фолбэка
+    # wait_ms > vk_platform.js INIT_TIMEOUT_MS (2000мс, withTimeout на
+    # VKWebAppInit) — без родительского VK-фрейма (headless) бридж всегда
+    # ждёт полный таймаут перед дев-фолбэком, 800мс по умолчанию для этого
+    # смоука не хватает (badge читался пустым до его истечения).
+    smoke_dist('lanebattler_vk', 8800, None, wait_ms=2500)  # vk-bridge.min.js уже локальный файл — мок не нужен для смоука дев-фолбэка
 
     print('\n=== ИТОГ ===')
     failed = [r for r in results if not r[1]]

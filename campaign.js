@@ -23,15 +23,20 @@
       // ТЗ №11: N-12/K-24 (ежедневный крючок) + закон 9/K-18 (финал-событие).
       dailyStreak: 0,
       lastDailyUTCDay: null, // Date.UTC(y,m,d) целого дня последнего забранного бонуса
-      milestoneShown: false
+      milestoneShown: false,
+      // RESTRUCTURE блок 3b, FUN_SPEC раздел 6: anti-frustration.
+      consecutiveLosses: 0,
+      firstLossShown: false
     };
   }
 
   // ТЗ №10: S-03 (сейв пишется целиком) + S-05 (номер схемы для миграций).
   // ТЗ №11: v1→v2 — добавлены dailyStreak/lastDailyUTCDay/milestoneShown
-  // (N-12/K-24, закон 9). Реальное первое изменение схемы (S-05) — старый
-  // v1-сейв ниже мигрирует явно, не через "поле просто отсутствует".
-  var SAVE_SCHEMA_VERSION = 2;
+  // (N-12/K-24, закон 9). Блок 3b: v2→v3 — добавлены consecutiveLosses/
+  // firstLossShown (anti-frustration, раздел 6). Реальное первое изменение
+  // схемы (S-05) — старый v1-сейв ниже мигрирует явно, не через "поле
+  // просто отсутствует".
+  var SAVE_SCHEMA_VERSION = 3;
 
   function serializeForSave(state) {
     return {
@@ -45,7 +50,9 @@
       },
       dailyStreak: state.dailyStreak,
       lastDailyUTCDay: state.lastDailyUTCDay,
-      milestoneShown: !!state.milestoneShown
+      milestoneShown: !!state.milestoneShown,
+      consecutiveLosses: state.consecutiveLosses,
+      firstLossShown: !!state.firstLossShown
     };
   }
 
@@ -82,6 +89,10 @@
     if (typeof raw.dailyStreak === 'number' && raw.dailyStreak >= 0) out.dailyStreak = raw.dailyStreak;
     if (typeof raw.lastDailyUTCDay === 'number') out.lastDailyUTCDay = raw.lastDailyUTCDay;
     if (typeof raw.milestoneShown === 'boolean') out.milestoneShown = raw.milestoneShown;
+    // v2→v3 (блок 3b): та же логика — поля отсутствуют у v1/v2-сейва,
+    // fresh уже даёт корректные дефолты (0/false).
+    if (typeof raw.consecutiveLosses === 'number' && raw.consecutiveLosses >= 0) out.consecutiveLosses = raw.consecutiveLosses;
+    if (typeof raw.firstLossShown === 'boolean') out.firstLossShown = raw.firstLossShown;
     return out;
   }
 
@@ -198,6 +209,34 @@
     return Math.round(base + (battleNumber - 1) * step);
   }
 
+  // RESTRUCTURE блок 3b, FUN_SPEC раздел 6 (anti-frustration). Мутирует
+  // state (тот же приём, что claimDaily) — вызывается РОВНО один раз на
+  // исход битвы (main.js showPopup). Возвращает, что показать/выдать
+  // вызывающей стороне, сама ничего не рисует и не начисляет юнитов.
+  //   almostFirstLoss — это самый первый проигрыш в игре когда-либо:
+  //     "первый проигрыш не должен читаться как наказание, только как
+  //     информация" — показывается один раз за всю кампанию.
+  //   grantFreeUnit — третий проигрыш ПОДРЯД (считается только с момента
+  //     последней победы или последней выдачи бонуса — не копится дальше
+  //     порога, "не превращать в костыль").
+  function recordBattleOutcome(campaign, state, won) {
+    var out = { almostFirstLoss: false, grantFreeUnit: false };
+    if (won) {
+      state.consecutiveLosses = 0;
+      return out;
+    }
+    if (!state.firstLossShown) {
+      out.almostFirstLoss = true;
+      state.firstLossShown = true;
+    }
+    state.consecutiveLosses += 1;
+    if (state.consecutiveLosses >= campaign.anti_frustration.loss_streak_threshold) {
+      out.grantFreeUnit = true;
+      state.consecutiveLosses = 0;
+    }
+    return out;
+  }
+
   return {
     freshCampaignState: freshCampaignState,
     SAVE_SCHEMA_VERSION: SAVE_SCHEMA_VERSION,
@@ -212,6 +251,7 @@
     buildBattleBalance: buildBattleBalance,
     reward: reward,
     dailyAvailable: dailyAvailable,
-    claimDaily: claimDaily
+    claimDaily: claimDaily,
+    recordBattleOutcome: recordBattleOutcome
   };
 });
