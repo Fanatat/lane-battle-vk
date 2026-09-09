@@ -1,0 +1,970 @@
+:root {
+  /* Design system — «вариант 2» (раунд 4b): мультяшный казуальный
+     мобильный стиль, палитра в духе Clash Royale — насыщенные
+     королевские синий/фиолетовый + золото + тревожный красно-оранжевый,
+     без пастели. Применяется только к DOM-интерфейсу (canvas поля боя —
+     отдельно, не тронут). */
+  --ink: #0f0f2e;
+  --r-lg: 20px;
+  --r-xl: 28px;
+
+  --royal-1: #4a4fd6;
+  --royal-2: #2a1f7a;
+  --royal-3: #1a1450;
+
+  --cta-1: #ffe873;
+  --cta-2: #ffb300;
+  --cta-shadow: #a85e00;
+
+  --secondary-1: #6d7bd6;
+  --secondary-2: #3a4296;
+  --secondary-shadow: #1c2160;
+
+  --alert-1: #ff8a5c;
+  --alert-2: #e8391f;
+  --alert-shadow: #8a1c0e;
+
+  --gold-text: #ffd23f;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  /* Утро (баг-репорт основателя с реального телефона, скриншоты меню и
+     карты глав): 100% от html/body мобильные браузеры часто считают по
+     "большому" вьюпорту, как будто адресной строки нет, даже когда она
+     реально видна и съедает часть экрана — контент выше/ниже границы
+     обрезается без скролла. 100dvh — актуальная видимая высота, с 100%
+     как фоллбэком для браузеров без поддержки dvh. */
+  height: 100%; height: 100dvh;
+  background: #0a0a1e; color: #eef0ff;
+  font-family: 'Fredoka', 'Segoe UI', Tahoma, Verdana, sans-serif;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+/* Декоративный фон-подложка (баг-репорт основателя: чёрные пустые поля по
+   краям экрана на широких мониторах, где #arenaWrap — фиксированная
+   пропорция 2.5:1 в центре) — не участвует в геймплее и не трогает
+   координаты арены/HUD, просто дорисовывает небо/холмы в палитре текущей
+   эпохи на весь вьюпорт позади игрового окна, см. game.js/renderBackdrop. */
+#backdrop { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+#arenaWrap {
+  position: relative; z-index: 1;
+  /* Утро (баг-репорт с телефона): раньше ширина считалась только от 100%
+     контейнера, без учёта высоты вьюпорта — на широком, но НИЗКОМ
+     альбомном экране (адресная строка съедает высоту сильнее, чем в
+     эмуляторе) итоговая высота (ширина/2.5) превышала реально видимую
+     область, и меню/карта глав обрезались сверху и снизу. min() берёт
+     меньшее из "по ширине контейнера" и "по высоте вьюпорта, пересчитанной
+     в ширину через тот же коэффициент 2.5" — арена больше не может стать
+     выше, чем реально видно. */
+  width: min(100%, 250vh);
+  width: min(100%, 250dvh);
+  max-width: 1250px;
+  aspect-ratio: 1000 / 400;
+  /* Стадия 2 (баг-репорт, тот же скриншот "часть экрана черная", что и
+     видел основатель): непрозрачный #000 тут перекрывал #backdrop на ВСЕХ
+     экранах — меню/магазин/миссии/плейлист/пауза, не только в бою.
+     В бою это было незаметно, т.к. поверх рисуется #game на весь кадр, но
+     вне матча под HUD-панелями оставался сплошной чёрный прямоугольник.
+     #backdrop рисуется всегда (drawBackdrop() не завязан на экран), просто
+     не давали ему быть видимым. */
+  background: transparent;
+  box-shadow: 0 0 40px rgba(0,0,0,.6);
+  user-select: none;
+}
+/* Вечер 08.09.2026 (тот же баг-репорт про заполнение кадра): эта тень,
+   раньше висевшая всегда, ложится ровно на границу letterbox-бокса арены
+   (y≈100 и y≈500 на честном 1000×600 — подтверждено замером яркости
+   пикселей по вертикали, см. отчёт). Даже после того как .screen (меню,
+   магазин, карта глав и т.п.) стал занимать кадр целиком (см. .screen
+   ниже), эта тёмная кайма продолжала визуально "обрезать" арену меньшим
+   боксом внутри кадра — читалась как отдельная маленькая рамка, а не как
+   часть общей картинки. Тень нужна, только пока НА САМОМ ДЕЛЕ виден
+   канвас боя (HUD показан — экраны match/paused/help, см. showScreen() в
+   game.js) — на остальных экранах это чисто декоративный шов сам по себе,
+   никак не привязанный к геймплею. :has() тут безопасен (не аспект и не
+   размер арены — просто убираем тень), сам канвас/HUD не трогаем ни на
+   пиксель. */
+#arenaWrap:not(:has(#hud:not(.hidden))) { box-shadow: none; }
+
+/* Игра — альбомная по решению ГДД (см. КОНЦЕПТ_ГДД.md, «Платформа и
+   стек»); в портретной ориентации на телефоне арена по аспекту 2.5:1
+   схлопывается до нескольких десятков пикселей и ломает все экраны —
+   вместо того чтобы пытаться уместить ландшафтную игру в портрет,
+   честно просим повернуть устройство (типовой паттерн жанра). */
+#rotatePrompt { display: none; }
+@media (pointer: coarse) and (orientation: portrait) {
+  #stage { display: none; }
+  #rotatePrompt {
+    display: flex; height: 100%; flex-direction: column; align-items: center;
+    justify-content: center; gap: 1em; text-align: center; padding: 2em;
+    background: #0a0a1e; color: #eef0ff;
+  }
+  #rotatePrompt .icon { font-size: 3em; }
+}
+canvas#game {
+  width: 100%; height: 100%; display: block;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+.hidden { display: none !important; }
+
+@keyframes bounceIn {
+  0% { transform: scale(.6) rotate(-3deg); opacity: 0; }
+  50% { transform: scale(1.08) rotate(1.5deg); opacity: 1; }
+  75% { transform: scale(.95) rotate(-.5deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes popIn {
+  0% { transform: scale(.85); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes glowPulse {
+  0%,100% { box-shadow: 0 0 22px 2px rgba(255,210,63,.55), 0 14px 34px rgba(0,0,0,.55); }
+  50% { box-shadow: 0 0 34px 8px rgba(255,210,63,.8), 0 14px 34px rgba(0,0,0,.55); }
+}
+@keyframes alertShake {
+  0%,100% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-4px) rotate(-1deg); }
+  40% { transform: translateX(4px) rotate(1deg); }
+  60% { transform: translateX(-3px) rotate(-.6deg); }
+  80% { transform: translateX(3px) rotate(.6deg); }
+}
+
+/* ---------- Кнопки: толстая тёмная обводка, объём, пружинящий hover ---------- */
+.menu-btn, .tool-btn, .icon-btn, .si-buy, .touch-btn {
+  border: 3px solid var(--ink);
+  font-family: 'Lilita One', 'Fredoka', sans-serif;
+  font-weight: 400;
+  letter-spacing: .02em;
+  cursor: pointer;
+  position: relative;
+  transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .18s ease, filter .12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-btn, .tool-btn, .icon-btn, .si-buy {
+  border-radius: var(--r-lg);
+}
+/* Глянцевая полоса сверху — характерный штрих мобильных гача-игр */
+.menu-btn::before, .si-buy::before {
+  content: ''; position: absolute; left: 6%; right: 6%; top: 8%; height: 32%;
+  background: linear-gradient(rgba(255,255,255,.55), rgba(255,255,255,0));
+  border-radius: 999px; pointer-events: none;
+}
+/* Утро (баг-репорт основателя с телефона): :hover на боевых кнопках без
+   media-запроса — классический источник "первый тап уходит в hover,
+   второй в click" на некоторых мобильных браузерах (даже без JS
+   mouseenter-слушателей, которые уже убраны из buildToolbar/способностей
+   выше). Ограничиваем hover устройствами, которые реально умеют наводить
+   мышью, а не эмулируют это из тача. */
+@media (hover: hover) and (pointer: fine) {
+  .menu-btn:hover:not(:disabled), .tool-btn:hover:not(.disabled), .icon-btn:hover,
+  .si-buy:hover:not(:disabled):not(.owned), .touch-btn:hover {
+    transform: translateY(-2px) scale(1.07);
+    filter: brightness(1.07);
+  }
+}
+.menu-btn:active:not(:disabled), .tool-btn:active:not(.disabled), .icon-btn:active,
+.si-buy:active:not(:disabled):not(.owned), .touch-btn:active {
+  transform: translateY(4px) scale(.95);
+  filter: brightness(.95);
+  transition-duration: .05s;
+}
+
+.menu-btn {
+  min-height: 48px;
+  font-size: 1.15em; padding: .6em 2em;
+  background: linear-gradient(var(--cta-1), var(--cta-2));
+  color: #4a2c00;
+  text-shadow: 0 1px 0 rgba(255,255,255,.4);
+  box-shadow: 0 6px 0 0 var(--cta-shadow), 0 10px 18px rgba(0,0,0,.45);
+}
+.menu-btn:active:not(:disabled) { box-shadow: 0 2px 0 0 var(--cta-shadow), 0 4px 8px rgba(0,0,0,.35); }
+/* Утро (баг-репорт с телефона): "Играть" была МЕНЬШЕ тумблеров звука —
+   иерархия читалась наоборот тому, что нужно. "Играть" — главное
+   действие, крупнее всех остальных кнопок меню. */
+.menu-btn.primary-big { font-size: 1.55em; min-height: 60px; padding: .55em 2.4em; }
+.menu-btn.secondary {
+  background: linear-gradient(var(--secondary-1), var(--secondary-2));
+  color: #eef0ff; font-weight: 400; font-size: 1em; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  box-shadow: 0 6px 0 0 var(--secondary-shadow), 0 10px 18px rgba(0,0,0,.4);
+}
+.menu-btn.secondary:active:not(:disabled) { box-shadow: 0 2px 0 0 var(--secondary-shadow), 0 4px 8px rgba(0,0,0,.3); }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: absolute; inset: 0; pointer-events: none;
+  display: flex; flex-direction: column; justify-content: space-between;
+  font-size: clamp(10px, 1.6vw, 15px);
+}
+.hud-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: .6em .7em;
+  gap: .5em;
+  position: relative; /* точка отсчёта для .hero-revive-box, см. ниже */
+}
+.core-box {
+  width: 30%; pointer-events: auto;
+  background: linear-gradient(var(--royal-2), var(--royal-3));
+  border: 3px solid var(--ink); border-radius: var(--r-lg);
+  padding: .4em .6em;
+}
+.core-enemy { text-align: right; }
+.core-label { font-size: .8em; opacity: .85; letter-spacing: .1em; font-weight: 600; }
+.bar { position: relative; height: 1.15em; background: #150f38; border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; }
+.bar-fill { position: absolute; top:0; left:0; bottom:0; width: 100%; transition: width .15s ease-out; }
+.bar-hp-player .bar-fill { background: linear-gradient(#7bfa8a,#1fa63e); left:0; }
+.bar-hp-enemy .bar-fill { background: linear-gradient(var(--alert-1), var(--alert-2)); right:0; left:auto; }
+.core-enemy .bar-fill { left: auto; right: 0; }
+.bar-text { font-size: .85em; margin-top: .2em; opacity: .95; font-weight: 600; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
+.gold-row { margin-top: .35em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.7); border-radius: 8px; transition: background .2s ease; }
+/* Видимый сигнал штрафа за копление золота (ночная правка, находка
+   ревьюера №1 — механика реальна, но раньше никак не показывалась). */
+@keyframes goldHoardPulse { 0%,100% { background: rgba(232,57,31,0); } 50% { background: rgba(232,57,31,.45); } }
+.gold-row.gold-hoard-flash { animation: goldHoardPulse .35s ease-in-out 4; }
+.gold-dot { width:1em; height:1em; border-radius:50%; background: radial-gradient(#fff3c4,#ffb300); display:inline-block; border:2px solid var(--ink); }
+/* Валюта «бриллиант» (раунд 5) — живой счётчик в HUD рядом с золотом. */
+.diamond-row { margin-top: .2em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: #8fd6ff; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+.diamond-dot { width:.9em; height:.9em; background: linear-gradient(135deg,#d6f4ff,#3fa9e0); display:inline-block; border:2px solid var(--ink); transform: rotate(45deg); }
+.mission-title {
+  flex: 1; text-align: center; font-family: 'Lilita One', sans-serif; font-size: 1.15em; letter-spacing: .04em;
+  padding: .35em .8em; margin-top: 0; color: var(--gold-text);
+  text-shadow: 0 2px 2px rgba(0,0,0,.7);
+}
+.icon-btn {
+  pointer-events: auto; background: linear-gradient(var(--secondary-1), var(--secondary-2));
+  color: #eef0ff; min-width: 48px; min-height: 48px; width: 2.6em; height: 2.6em; font-size: 1em;
+  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+}
+.icon-btn:active { box-shadow: 0 2px 0 0 var(--secondary-shadow); }
+
+.first-hint {
+  align-self: center; margin-bottom: .5em; pointer-events: none;
+  background: linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); color: var(--gold-text);
+  padding: .5em 1em; border-radius: var(--r-lg); font-size: .85em; text-align: center;
+  font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.4);
+  transition: opacity .6s ease; opacity: 1;
+}
+.first-hint.fading { opacity: 0; }
+/* Стадия 2 (баг-репорт): на мобильном альбомном баннер во всю ширину
+   закрывал добрую половину поля боя в первые важные секунды матча — на
+   узкий, компактный по центру, чтобы бой по бокам оставался виден. */
+@media (pointer: coarse) and (orientation: landscape) {
+  .first-hint { max-width: 60%; font-size: .68em; padding: .4em .7em; }
+}
+.hud-bottom {
+  display: flex; flex-direction: column; align-items: center; gap: .4em;
+  padding: 0 .6em .6em;
+  min-width: 0; /* иначе flex-контейнер не даёт себе сжаться теснее содержимого — сам ряд ниже не заскроллится */
+}
+/* Баг-репорт основателя (третий той же породы за сутки — обрезанное меню,
+   магазин с одним товаром, теперь этот ряд): раскладка была рассчитана на
+   ФИКСИРОВАННОЕ число кнопок, а не на любое. .toolbar (вложенный
+   flex-контейнер с юнитами и апгрейдом) не был защищён от сжатия —
+   родительский .hud-bottom-row на тесном экране душил его ниже
+   естественной ширины (тот самый паттерн "flex-shrink давит контейнер",
+   что уже чинили для .shop-list), и последняя кнопка тулбара (апгрейд, $)
+   вылезала из своих же границ и рисовалась ПОД следующей кнопкой
+   (удар героем) — не просто обрезка, а видимое наложение спрайтов.
+   Системный фикс на будущее (любое число юнитов/способностей): ряд не
+   душит своих детей (flex-shrink:0 на каждом), а вместо этого скроллится
+   по горизонтали, если не помещается целиком — кнопки остаются
+   касабельного размера, ничего не накладывается друг на друга ни при
+   каком количестве. `safe center` — центрирует, когда влезает целиком, и
+   не мешает доскроллить до начала ряда, когда не влезает (без `safe`
+   часть контента слева иногда становится недостижимой при скролле). */
+.hud-bottom-row {
+  display: flex; align-items: flex-end; justify-content: center; justify-content: safe center;
+  gap: .5em; pointer-events: auto;
+  max-width: 100%; overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  /* Баг-репорт основателя (видео 09.09): hover на крайней кнопке (transform:
+     scale(1.07) в правиле .tool-btn:hover) на паре px раздвигал scrollable
+     overflow ряда за границу его же shrink-to-fit контейнера — overflow-x:auto
+     честно рисовал полосу прокрутки под тулбаром на пустом месте. Боковой
+     padding — запас, который hover-раздутие крайних кнопок гасит, не долетая
+     до края; сам overflow-x:auto остаётся живым (фикс от 08.09, узкие экраны
+     с реально не помещающимся рядом кнопок скроллятся как раньше). */
+  padding: 0 6px 2px;
+}
+.hud-bottom-row > * { flex-shrink: 0; }
+@media (pointer: coarse) {
+  /* .hud-bottom{align-items:center} центрирует ряд как ЦЕЛОЕ (вместе с
+     его margin-полем) — margin-left в одиночку не "отодвигает от левого
+     края", а сдвигает уже центрированный бокс, реального якоря к краю не
+     даёт (это и было причиной первой неудачной попытки). align-self:
+     stretch — ряд сначала занимает всю ширину .hud-bottom, тогда
+     margin-left/margin-right (оба, выставляются в game.js,
+     layoutHudBottomRow()) уже честно отступают от настоящих левого и
+     правого краёв. */
+  .hud-bottom-row { align-self: stretch; }
+}
+/* Второй заход (основатель прислал новый скриншот — наложение осталось):
+   первый фикс убрал внутреннее сжатие ряда, но проблема была НЕ во
+   внутреннем сжатии — тулбар и на реальном устройстве, и в тестах после
+   первого фикса свою естественную ширину держал честно. Наложение — со
+   СОВСЕМ ДРУГИМ элементом: `.touch-actions` (кнопки удар/спец/кирка/клич
+   на touch) и `#joyBase` (джойстик) лежат АБСОЛЮТНО, вне потока
+   `.hud-bottom-row` вообще (см. #touchControls ниже) — координатор
+   подсказал верно: "не позиционируется ли группа способностей абсолютно,
+   не выносится ли из потока". Отцентрованный `.hud-bottom-row` на узком
+   touch-экране физически заезжает под них (проверено: на 900/800/750/700
+   px ширины реальное наложение, на 850px — 7px просвета чисто случайно,
+   поэтому прошлая проверка на пяти viewport его не поймала). Резервируем
+   те же зоны теми же выражениями, что задают сами джойстик/тач-кнопки
+   (не подобранными на глаз числами) — гарантирует отсутствие наложения
+   по построению, а не по совпадению конкретной ширины экрана. */
+/* CSS-формула (margin/width от %/vmin, параллельная джойстику и
+   тач-кнопкам) не давала гарантии совпадения с их РЕАЛЬНЫМИ отрисованными
+   границами — разошлась на практике (см. layoutHudBottomRow() в game.js).
+   Резервирование места под .hero-mini/.toolbar теперь считается в JS по
+   настоящим getBoundingClientRect() джойстика и .touch-actions, не по
+   отдельной формуле, которая может незаметно разойтись с оригиналом. */
+.hero-mini {
+  display:flex; flex-direction:column; align-items:center; gap:.25em; pointer-events:auto; margin-right:.6em;
+  background: linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); border-radius: var(--r-lg); padding: .3em .4em;
+}
+.hero-mini-icon {
+  width:1.9em; height:1.9em; border-radius:50%; background: linear-gradient(var(--secondary-1), var(--secondary-2));
+  border:2px solid var(--gold-text); color:var(--gold-text); display:flex; align-items:center; justify-content:center; font-size:1em;
+}
+.bar-hp-hero { width: 4em; height: .6em; }
+.bar-hp-hero .bar-fill { background: linear-gradient(var(--cta-1), var(--cta-2)); }
+
+/* Таймер автовоскрешения героя + досрочный выкуп (раунд 7, баг-репорт:
+   герой раньше воскресал незаметно быстро). Утро (баг-репорт основателя
+   с телефона, скриншот боя — "ДИКО НЕУДОБНО"): раньше лежала широкой
+   панелью ПОСЕРЕДИНЕ поля боя, закрывая юнитов на линии столкновения —
+   что бы ни делали с flex-потоком нижнего ряда, сама позиция (по центру,
+   на высоте боя) была неверной в принципе. Перенесли в верхнюю
+   "чердачную" зону HUD — но там вылезла ВТОРАЯ проблема (баг-репорт,
+   скриншот 1788791898991.jpg): фиксированный `top` в em не учитывал, что
+   на реальном узком телефоне заголовок миссии переносится на 2 строки и
+   .hud-top становится выше — плашка налезала на полосу HP врага. Теперь
+   `#heroReviveBox` — последний ребёнок именно `.hud-top` (см. index.html),
+   а не отдельный элемент с угаданным отступом: `top:100%` берёт РЕАЛЬНУЮ
+   высоту этого ряда, какой бы она ни была (1 или 2 строки заголовка),
+   и сама подстраивается. Не на линии боя, не над тулбаром, не поверх
+   кнопки "Продолжить" на паузе (там вообще не показывается, см.
+   updateHud() в game.js). Компактный размер + перенос кнопки строкой ниже. */
+.hero-revive-box {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 6;
+  margin-top: .3em;
+  display: flex; flex-direction: column; align-items: center; gap: .3em; pointer-events: auto;
+  background: linear-gradient(var(--alert-2), var(--royal-3)); border: 3px solid var(--ink);
+  border-radius: var(--r-lg); padding: .3em .6em; font-size: .78em; white-space: nowrap;
+  animation: popIn .2s ease-out, heroDownGlow 1.1s ease-in-out .2s infinite;
+}
+.hero-revive-box #heroReviveTimer { color: var(--gold-text); font-family: 'Lilita One', sans-serif; }
+.hero-revive-box .menu-btn { min-height: 32px; padding: .2em .6em; font-size: .8em; }
+/* Стадия 2 (баг-репорт): текст статуса героя в углу HUD легко пропустить,
+   если взгляд игрока на другом конце арены — коробка выкупа теперь
+   постоянно пульсирует, пока герой мёртв, не только при появлении. */
+@keyframes heroDownGlow {
+  0%,100% { box-shadow: 0 0 0 0 rgba(232,57,31,.6); }
+  50% { box-shadow: 0 0 16px 5px rgba(232,57,31,.75); }
+}
+/* Разовая вспышка на весь экран в момент смерти героя — сигнал заметен,
+   даже если игрок смотрит в другой конец арены, не только мелкий текст HUD. */
+#heroDownFlash {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5;
+  background: radial-gradient(ellipse at center, rgba(232,57,31,0) 55%, rgba(232,57,31,.55) 100%);
+  opacity: 0;
+}
+#heroDownFlash.flash { animation: heroDownFlashFade 1s ease-out; }
+@keyframes heroDownFlashFade { 0% { opacity: 1; } 100% { opacity: 0; } }
+.toolbar { display: flex; gap: .4em; pointer-events: auto; }
+.tool-btn {
+  position: relative; min-width: 48px; min-height: 48px; width: 3.6em; height: 3.8em;
+  flex-shrink: 0; /* min-width уже держал пол, но явный флаг — тот же принцип защиты, что и на .toolbar/.hud-bottom-row выше */
+  background: linear-gradient(var(--secondary-1), var(--secondary-2)); color: #eef0ff;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding: .2em 0 .15em; font-size: 1em; overflow: hidden;
+  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tool-btn:hover:not(.disabled) { border-color: var(--gold-text); }
+}
+.tool-btn.disabled { opacity: .45; cursor: not-allowed; transform: none !important; filter: none !important; }
+.tool-btn.pressed { transform: translateY(3px); box-shadow: none; }
+.tool-icon { font-size: 1.3em; line-height:1; }
+.tool-icon-canvas { width: 2em; height: 2.2em; display:block; }
+.tool-cost { font-size: .7em; color: var(--gold-text); margin-top: .1em; font-weight: 700; font-family: 'Fredoka', sans-serif; }
+.tool-key {
+  position: absolute; top: 2px; left: 4px; font-size: .62em; opacity: .9; font-weight: 700;
+  background: rgba(0,0,0,.45); border-radius: 4px; padding: 0 .25em; font-family: 'Fredoka', sans-serif;
+}
+.special-btn { background: linear-gradient(var(--royal-1), var(--royal-3)); border-color: var(--ink); }
+.cd-overlay {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 0%;
+  background: rgba(0,0,0,.65); border-radius: 0 0 calc(var(--r-lg) - 3px) calc(var(--r-lg) - 3px); pointer-events: none;
+}
+@keyframes shakeBtn { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+.tool-btn.denied { animation: shakeBtn .2s; }
+
+/* ---------- Экраны ---------- */
+.screen {
+  /* Вечер 08.09.2026 (баг-репорт с реальной ВК-площадки — «600px это вся
+     игра, а само игровое окно лежит внутри и не хватает места»): раньше
+     .screen был position:absolute внутри #arenaWrap — того же контейнера,
+     что жёстко держит аспект 2.5:1 канваса боя (см. #arenaWrap ниже). На
+     контейнере 1000×600 (ВК-iframe, 5:3) это давало #arenaWrap ровно
+     1000×400 (250px×2.5=нет, 1000/2.5=400) — и меню/магазин/карта глав,
+     как потомки #arenaWrap, оказывались зажаты в те же 400px, с ровно
+     100px пустых декоративных полей сверху и снизу (число подтверждено
+     живым Playwright-замером #screenMenu: top:100, bottom:500). Экраны
+     (меню/магазин/карта глав/пауза/итог/справка/плейлист) — НЕ канвас: их
+     разметка не завязана на пиксельную сетку боя и не обязана держать
+     2.5:1. position:fixed вместо absolute — контекст позиционирования
+     становится вьюпорт iframe целиком (тут нет ни одного предка с
+     transform/filter/will-change, ломающего это), а не letterbox-бокс
+     арены, поэтому inset:0 теперь означает «весь кадр 1000×600», а не
+     «внутренние 1000×400». #arenaWrap (и сам канвас боя, и HUD — они
+     видны только во время match/paused/help, см. showScreen() в game.js)
+     остаётся ПОЛНОСТЬЮ нетронутым — 2.5:1 канваса и его выравнивание с
+     HUD не меняются ни на пиксель, риска исказить графику боя нет. */
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; gap: .7em;
+  padding: 1em;
+  /* Утро (баг-репорт с телефона, скриншоты меню/карты глав): раньше при
+     нехватке высоты контент просто обрезался краем экрана без скролла
+     (html/body — overflow:hidden). Теперь, если не влезло даже после
+     компактного режима ниже (@media max-height), можно докрутить —
+     обрезки в принципе больше не бывает, максимум неидеальное
+     центрирование. */
+  overflow-y: auto;
+}
+.screen.overlay { background: rgba(4,4,14,.85); }
+/* Экран итога (раунд 5-6, повторная жалоба основателя): фон на самом деле
+   уже анимируется (день/ночь, ветер, флаги, юниты) — просто 85%-затемнение
+   паузы делало это незаметным глазу. Для итога держим фон заметно светлее,
+   чтобы «живая» сцена позади карточки реально читалась. */
+#screenResult.overlay { background: rgba(4,4,14,.4); }
+
+/* Карточная панель — списки миссий/магазина */
+.panel-card {
+  display: flex; flex-direction: column; align-items: center; gap: .7em;
+  background: linear-gradient(var(--royal-1), var(--royal-3));
+  border: 4px solid var(--ink); border-radius: var(--r-xl);
+  padding: 1.2em 1.4em; box-shadow: 0 12px 30px rgba(0,0,0,.5);
+  max-width: 94vw; animation: popIn .18s ease-out;
+  /* Утро (баг-репорт с телефона) — сама карточка тоже не имела потолка по
+     высоте, только вложенные списки (.chapter-trail/.shop-list) скроллились
+     сами по себе; на низком вьюпорте заголовок+список+кнопка «Назад» вместе
+     всё равно превышали экран. */
+  max-height: 94vh; max-height: 94dvh; overflow-y: auto;
+  /* Утро 08.09.2026: .panel-card теперь единственный скролл экранов
+     выбора главы/магазина (см. .chapter-trail/.shop-list) — даём ему тот
+     же фирменный скроллбар, что раньше был у вложенных списков, вместо
+     системного по умолчанию. */
+  scrollbar-width: thin; scrollbar-color: var(--cta-2) rgba(0,0,0,.25);
+}
+.panel-card::-webkit-scrollbar { width: 10px; }
+.panel-card::-webkit-scrollbar-track { background: rgba(0,0,0,.25); border-radius: 6px; }
+.panel-card::-webkit-scrollbar-thumb { background: linear-gradient(var(--cta-1), var(--cta-2)); border-radius: 6px; border: 2px solid var(--ink); }
+.panel-card h2 {
+  margin: 0 0 .1em; padding: .25em 1.1em; border-radius: 999px;
+  background: linear-gradient(var(--cta-1), var(--cta-2));
+  color: #4a2c00; text-shadow: 0 1px 0 rgba(255,255,255,.4);
+  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.25em;
+  box-shadow: 0 4px 0 0 var(--cta-shadow);
+}
+
+/* Всплывающие модалки (пауза, итог миссии) — упругий bounce при появлении */
+.popup-card {
+  display: flex; flex-direction: column; align-items: center; gap: .7em;
+  background: linear-gradient(var(--royal-1), var(--royal-3));
+  border: 4px solid var(--ink); border-radius: var(--r-xl);
+  padding: 1.4em 1.8em; box-shadow: 0 14px 34px rgba(0,0,0,.55);
+  max-width: 94vw; animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1);
+  max-height: 94vh; max-height: 94dvh; overflow-y: auto;
+}
+.popup-card h2 {
+  margin: 0 0 .1em; padding: .25em 1.2em; border-radius: 999px;
+  background: linear-gradient(var(--cta-1), var(--cta-2));
+  color: #4a2c00; text-shadow: 0 1px 0 rgba(255,255,255,.4);
+  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.35em;
+  box-shadow: 0 4px 0 0 var(--cta-shadow);
+}
+.popup-card p { max-width: 26em; opacity: .95; }
+/* Крупная выделенная награда на экране итога (утро 08.09.2026, баг-репорт
+   основателя — окно победы «явно слишком длинное»): одно название и один
+   значок валюты сквозь всю игру (см. КОНЦЕПТ_ГДД.md, «Допущения») — тот же
+   .diamond-dot, что в HUD боя и в шапке магазина, не отдельная иконка. */
+.result-reward {
+  display: flex; align-items: baseline; gap: .5em; margin: -.2em 0 .1em;
+}
+.result-reward-label { font-size: .85em; opacity: .85; }
+.result-reward-value {
+  display: inline-flex; align-items: center; gap: .3em;
+  font-family: 'Lilita One', sans-serif; font-size: 1.7em; color: var(--gold-text);
+  text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
+}
+.result-reward-value .diamond-dot { width: 1.1em; height: 1.1em; }
+.result-reward-value #resultRewardAmount::before { content: '+'; }
+/* Победа — золотое сияние; поражение — тревожный красно-оранжевый (по
+   палитре «Clash Royale»: тревожные элементы отдельным акцентным цветом) */
+.popup-card.win { border-color: var(--gold-text); animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1), glowPulse 1.6s ease-in-out .45s infinite; }
+.popup-card.win h2 { background: linear-gradient(#fff3b0, var(--gold-text)); }
+.popup-card.lose {
+  border-color: var(--alert-2);
+  background: linear-gradient(#3a1420, var(--royal-3));
+  animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1), alertShake .5s ease .45s 1;
+}
+.popup-card.lose h2 { background: linear-gradient(var(--alert-1), var(--alert-2)); color: #3a0d02; }
+
+#screenMenu h1 {
+  font-family: 'Lilita One', sans-serif;
+  font-size: clamp(1.7em, 5.2vw, 3.2em); letter-spacing: .08em; margin: 0 0 .1em; color: var(--gold-text);
+  -webkit-text-stroke: 2px var(--ink);
+  text-shadow: 0 4px 0 var(--ink), 0 8px 16px rgba(0,0,0,.55);
+}
+.mission-list { display: flex; flex-direction: column; gap: .5em; max-height: 55vh; overflow-y: auto; width: min(90vw, 26em); }
+.mission-item {
+  display:flex; justify-content:space-between; align-items:center; gap:1em;
+  padding: .6em 1em; border-radius: var(--r-lg); background: rgba(255,255,255,.08);
+  border: 3px solid var(--ink); cursor: pointer; text-align: left; min-height: 48px;
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1), border-color .12s ease;
+}
+.mission-item:hover:not(.locked) { border-color: var(--gold-text); transform: scale(1.03); }
+.mission-item:active:not(.locked) { transform: scale(.97); }
+.mission-item.locked { opacity: .45; cursor: not-allowed; }
+.mission-item .mi-name { font-size: .85em; opacity: .85; }
+
+/* Карта глав (раунд 5, доработана в раунде 7): SVG-полоса на главу —
+   фон-«местность», узлы со смещением по высоте, волнистые пунктирные
+   дорожки между ними (см. chapterRowSVG в game.js). */
+.chapter-trail {
+  display: flex; flex-direction: column; gap: .3em; width: min(94vw, 34em);
+  /* Утро 08.09.2026 (баг-репорт основателя — «двойной скролл в компании»):
+     раньше был И свой overflow-y:auto (со скроллбаром), И родительская
+     .panel-card тоже скроллилась — два независимых скролла одновременно.
+     Единственный источник скролла для этого экрана теперь — .panel-card;
+     flex-shrink:0 остаётся (профилактика того же класса бага, что и раньше:
+     родитель не должен «душить» список ниже естественной высоты). */
+  flex-shrink: 0;
+}
+.chapter-row { display: flex; flex-direction: column; align-items: stretch; }
+.chapter-label { font-size: .85em; font-weight: 600; opacity: .9; margin-bottom: -.2em; }
+.chapter-svg { width: 100%; height: 84px; display: block; }
+.trail-node-svg circle { transition: transform .15s cubic-bezier(.34,1.56,.64,1); transform-origin: center; transform-box: fill-box; }
+.trail-node-svg:not(.locked) { cursor: pointer; }
+.trail-node-svg:not(.locked):hover circle { transform: scale(1.12); }
+.trail-node-svg:not(.locked):active circle { transform: scale(.94); }
+.trail-node-svg.locked circle { cursor: not-allowed; }
+.trail-node-svg text { pointer-events: none; user-select: none; }
+
+/* Переключатель музыкального трека в паузе (раунд 5). */
+/* Раунд 10 — два независимых переключателя звука рядом (SFX/музыка),
+   и полноценная вкладка «Плейлист» вместо простого пикера в паузе. */
+.mute-row { display: flex; gap: .5em; }
+/* Сброс прогресса (ночная находка ревьюера) — намеренно неприметная
+   текстовая ссылка, не полноценная кнопка: страховка, не приглашение. */
+.link-btn {
+  background: none; border: none; color: rgba(255,255,255,.4); font-size: .75em;
+  text-decoration: underline; cursor: pointer; margin-top: .6em; padding: .4em;
+  font-family: 'Fredoka', sans-serif;
+}
+.link-btn:hover { color: rgba(255,255,255,.7); }
+.link-btn.confirming { color: var(--alert-1); text-decoration: none; font-weight: 600; }
+.mute-row .menu-btn { flex: 1; font-size: .85em; padding: .6em 1em; }
+
+.playlist-list {
+  display: flex; flex-direction: column; gap: .5em; width: min(92vw, 28em); max-height: 50vh; overflow-y: auto;
+  flex-shrink: 0; /* тот же профилактический фикс, что у .chapter-trail — растёт вместе с числом купленных треков */
+}
+.playlist-row {
+  display: flex; align-items: center; gap: .6em;
+  padding: .5em .8em; border-radius: var(--r-lg); background: rgba(255,255,255,.08);
+  border: 3px solid var(--ink); min-height: 48px;
+}
+.playlist-name { flex: 1; text-align: left; font-weight: 600; }
+.toggle-switch {
+  width: 2.6em; height: 1.5em; border-radius: 999px; border: 2px solid var(--ink);
+  background: #3a3f66; position: relative; flex-shrink: 0; cursor: pointer; padding: 0;
+}
+.toggle-switch::after {
+  content: ''; position: absolute; top: 1px; left: 1px; width: 1.1em; height: 1.1em;
+  border-radius: 50%; background: #cfd3ea; transition: transform .18s ease;
+}
+.toggle-switch.on { background: linear-gradient(#7bfa8a, #1fa63e); }
+.toggle-switch.on::after { transform: translateX(1.1em); background: #fff; }
+.icon-btn.small { width: 2em; height: 2em; min-width: 36px; min-height: 36px; font-size: .8em; }
+#btnShuffle.active { outline: 3px solid var(--gold-text); }
+
+/* Отсчёт 3…2…1 перед первым заходом новичка (раунд 5). */
+#countdownOverlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(4,4,14,.55); z-index: 6; pointer-events: none;
+}
+#countdownNum {
+  font-family: 'Lilita One', sans-serif; font-size: clamp(3em, 14vw, 7em); color: var(--gold-text);
+  -webkit-text-stroke: 3px var(--ink); text-shadow: 0 6px 0 var(--ink);
+  animation: popIn .3s ease-out;
+}
+/* Тулбар увеличен и с общим затемнением сцены, пока видна подсказка
+   новичку сразу после отсчёта (раунд 5) — плавно сходит на нет при первом
+   действии игрока (см. dismissFirstMissionHint в game.js). */
+#hud.intro-enlarged::before {
+  content: ''; position: absolute; inset: 0; background: rgba(4,4,14,.5);
+  pointer-events: none; transition: opacity .6s ease;
+}
+#hud.intro-enlarged .hud-bottom-row {
+  transform: scale(1.35); transition: transform .6s cubic-bezier(.34,1.56,.64,1);
+}
+.hud-bottom-row { transition: transform .6s cubic-bezier(.34,1.56,.64,1); }
+/* Третий заход того же наложения на этом тулбаре (баг-репорт основателя,
+   скриншоты Яндекса налезали друг на друга): scale(1.35) увеличивает
+   .hud-bottom-row ВИЗУАЛЬНО, не резервируя под это место в layout —
+   getBoundingClientRect() подтвердил реальное пересечение #upgradeBtn/
+   #touchPickaxe на 568px (777px²). Оба предыдущих раунда (см. историю
+   выше, ~250-300) чинили это резервированием места по РЕАЛЬНЫМ размерам
+   соседей — но здесь резервировать нечего: на touch .hud-bottom-row и так
+   растянут (align-self:stretch, см. `@media (pointer: coarse)` выше)
+   почти на весь зазор между джойстиком и .touch-actions, который сам
+   вычислен из их настоящих getBoundingClientRect() в layoutHudBottomRow()
+   (game.js) — любой scale>1 такого уже-заполненного зазора неизбежно
+   вылезает за оба его края при ЛЮБОЙ ширине экрана, точный коэффициент
+   тут ничего не спасает. Убираем визуальное увеличение именно на touch
+   (там и было наложение, только там ряд растянут на весь зазор) —
+   затемнение подсказки (::before выше) остаётся и само по себе выделяет
+   тулбар (он рисуется поверх затемнения как обычный DOM-потомок #hud, а
+   не увеличенным), просто без зума. На десктопе (pointer:fine, ряд НЕ
+   растянут на весь экран) поведение не тронуто — там пересечений не было
+   и жалобы не было. */
+@media (pointer: coarse) {
+  #hud.intro-enlarged .hud-bottom-row { transform: none; }
+}
+
+/* Раунд 8, п.G — рамка вокруг счётчика очков, чтобы визуально
+   отделить его от заголовка "Магазин" и от списка карточек снизу (были
+   слитными, жалоба основателя). */
+.shop-currency {
+  color: var(--gold-text); font-size: 1.1em; font-family: 'Lilita One', sans-serif;
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  border: 2px solid var(--ink); border-radius: var(--r-lg);
+  background: rgba(0,0,0,.2); padding: .3em .9em; margin: 0;
+}
+/* Утро 08.09.2026 (баг-репорт основателя): планка "Магазин"+счётчик должна
+   быть закреплена сверху при пролистывании списка, а кнопка "Назад"
+   переехала сюда же, в правый край той же строки (была отдельной кнопкой
+   под списком). Sticky работает относительно .panel-card — единственного
+   скролла этого экрана (см. .shop-list ниже) — со своим непрозрачным
+   фоном, повторяющим фон карточки, чтобы список не «просвечивал» под
+   прилипшей панелью. */
+/* Вечер 08.09.2026 (баг-репорт с реальной ВК/Яндекс площадки, видео
+   основателя — верх предыдущей карточки виден НАД прилипшей шапкой):
+   причина — `.shop-header-row` тянул верхний отступ карточки на себя
+   отрицательным margin-top (-1.2em), чтобы визуально встать вплотную к
+   скруглению `.panel-card` НЕСМОТРЯ на padding-top карточки. Для
+   position:sticky это ловушка: offset "top" считается от margin-края, а
+   отрицательный margin-top при этом ИГНОРИРУЕТСЯ (проверено живым
+   Playwright-замером getBoundingClientRect — прилипшая шапка стояла на
+   ~23px НИЖЕ реального верха .panel-card, ровно на величину этого
+   margin-top). Именно в этом зазоре и был виден скроллящийся контент —
+   шапка физически не долетала до самого верха, а не «недостаточно
+   непрозрачная». Фикс: убираем padding-top у .panel-card ИМЕННО на экране
+   магазина (обычным screen'ам вроде выбора главы этот padding нужен как
+   был) и переносим ту же величину внутрь `.shop-header-row` как её
+   СОБСТВЕННЫЙ padding-top — та же картинка в состоянии покоя, но без
+   отрицательного margin-top, о который спотыкался sticky. */
+#screenShop .panel-card { padding-top: 0; }
+.shop-header-row {
+  display: flex; align-items: center; justify-content: space-between; gap: .6em;
+  width: 100%; flex-shrink: 0;
+  position: sticky; top: 0; z-index: 2;
+  background: linear-gradient(var(--royal-1), var(--royal-3));
+  margin: 0 -1.4em 0; padding: 1.2em 1.4em .6em;
+  border-bottom: 2px solid rgba(255,255,255,.12);
+  /* Скруглённые ВЕРХНИЕ углы ровно в радиус самой карточки — без этого в
+     угловом зазоре на 1-2px просвечивал край прокручиваемого списка под
+     прилипшей шапкой (видно на скриншоте живого теста). */
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+}
+.shop-header-left { display: flex; align-items: center; gap: .6em; }
+.shop-header-row h2 { margin: 0; }
+.shop-header-row .shop-currency { font-size: .95em; padding: .25em .6em; }
+.menu-btn.small { min-height: 36px; padding: .3em 1em; font-size: .85em; }
+/* Список карточек — своя рамка-«окно» (была ещё и своим скроллом — баг
+   "двойной скролл в компании/магазине", утро 08.09.2026: .shop-list имел
+   собственный overflow-y:auto ОДНОВРЕМЕННО с .panel-card — убрано, скролл
+   теперь только у .panel-card, см. её правила выше). Раунд 11: карточка
+   расширена (основатель — «грамотнее расширить карточку, чем резать
+   текст»), было 30em. */
+.shop-list {
+  display: flex; flex-direction: column; gap: .5em;
+  flex-shrink: 0;
+  width: min(94vw, 36em); padding: .6em; border: 2px solid rgba(255,255,255,.15);
+  border-radius: var(--r-lg); background: rgba(0,0,0,.15);
+}
+/* Заголовки групп (раунд 11, баг-репорт: однотипные покупки — башни,
+   капканы и т.п. — стояли в разных углах списка) — визуально отделяют
+   секции магазина друг от друга. */
+.shop-section-title {
+  flex-shrink: 0;
+  margin: .5em 0 -.1em; padding: .15em .3em; font-family: 'Lilita One', sans-serif;
+  font-size: .85em; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  border-bottom: 2px solid rgba(255,255,255,.2);
+}
+.shop-section-title:first-child { margin-top: 0; }
+/* Раунд 11 (баг-репорт: цена наезжала на длинное описание при переносе на
+   2 строки) — заголовок+цена своей строкой сверху, описание отдельной
+   строкой во всю ширину карточки снизу: наложение больше невозможно
+   структурно, независимо от длины текста. */
+.shop-item {
+  display: flex; flex-direction: column; gap: .25em; flex-shrink: 0;
+  padding: .55em .9em; border-radius: var(--r-lg); background: rgba(255,255,255,.08);
+  border: 3px solid var(--ink); text-align: left; min-height: 48px;
+}
+.shop-item .si-header { display: flex; align-items: center; justify-content: space-between; gap: 1em; }
+.shop-item .si-title { flex: 1 1 auto; min-width: 0; }
+.shop-item .si-buy { flex-shrink: 0; }
+/* Утро — справка «?»: строка юнита/героя с живым анимированным значком
+   слева (тот же риг стикмена, что и в бою — см. renderHelp()) и текстом
+   справа, вместо колонки заголовок/описание/кнопка, как у обычных
+   товаров магазина. */
+.help-item { flex-direction: row; align-items: center; gap: .7em; }
+.help-icon-canvas { flex-shrink: 0; width: 48px; height: 52px; background: rgba(0,0,0,.2); border-radius: 10px; }
+.help-item-text { flex: 1 1 auto; min-width: 0; }
+/* Переключатель "Время суток" (ночная правка) — три мини-кнопки в ряд. */
+.time-select-group { display: flex; gap: .4em; flex-wrap: wrap; }
+.time-select-group .si-buy, .toggle-inline { padding: .3em .7em; min-height: 36px; font-size: .85em; }
+.shop-item .si-desc { font-size: .8em; opacity: .8; overflow-wrap: break-word; }
+.shop-item .si-buy {
+  padding: .35em .9em; min-height: 40px;
+  background: linear-gradient(var(--cta-1), var(--cta-2));
+  color: #4a2c00; font-family: 'Lilita One', sans-serif; font-size: .9em; white-space: nowrap;
+  box-shadow: 0 4px 0 0 var(--cta-shadow), 0 5px 8px rgba(0,0,0,.35);
+}
+.shop-item .si-buy:active:not(:disabled):not(.owned) { box-shadow: 0 1px 0 0 var(--cta-shadow); }
+.shop-item .si-buy:disabled {
+  background: linear-gradient(#6a6f9a, #3a3f66); color: #b7bce0; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #1c2160; cursor: not-allowed;
+}
+.shop-item .si-buy.owned {
+  background: linear-gradient(#7bfa8a,#1fa63e); color: #0a2a0f; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #0e4a16; cursor: default;
+}
+.shop-note {
+  flex-shrink: 0; margin: 0 0 .2em; padding: 0 .3em; font-size: .75em; opacity: .65; font-style: italic;
+}
+/* Утренняя правка: тумблер DLC вкл/выкл — зелёная "Включено" (переиспользует
+   .owned), красная "Выключено" — своя палитра студии (--alert-1/2), не
+   голый #f00. */
+.shop-item .si-buy.toggle-inline.off {
+  background: linear-gradient(var(--alert-1), var(--alert-2)); color: #fff; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 var(--alert-shadow), 0 5px 8px rgba(0,0,0,.35);
+}
+/* Предупреждение о недоступном магазине Яндекса (ночь 07→08.09.2026) —
+   тревожный акцент студии (--alert-1), но не отдельная кнопка, просто
+   заметная строка под ценой DLC. */
+.si-warning { color: var(--alert-1); opacity: 1; font-style: normal; font-weight: 600; }
+
+/* Реклама за вознаграждение на экране итога миссии (ночь 07→08.09.2026) —
+   отдельный визуальный акцент (не золотой CTA, чтобы не путать с «Далее»):
+   бирюзово-зелёный, ассоциация с «бонус», кнопка явно называет и рекламу,
+   и награду текстом (требование площадок, не просто "x3"). */
+.ad-reward-row { display: flex; flex-direction: column; gap: .5em; margin: .2em 0; }
+.ad-reward-btn {
+  background: linear-gradient(#7bfae0, #1fa688); color: #04322a;
+  box-shadow: 0 6px 0 0 #0e5c4a, 0 10px 18px rgba(0,0,0,.4);
+  font-size: 1em;
+}
+.ad-reward-btn:active:not(:disabled) { box-shadow: 0 2px 0 0 #0e5c4a, 0 4px 8px rgba(0,0,0,.3); }
+.ad-reward-btn:disabled {
+  background: linear-gradient(#6a6f9a, #3a3f66); color: #b7bce0; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #1c2160; cursor: not-allowed;
+}
+.ad-reward-amount { opacity: .85; font-size: .9em; }
+/* Утро 08.09.2026 (просьба основателя — «сделать слегка пульсирующей, как
+   бы привлекая внимание»): лёгкое дыхание масштабом, не агрессивный bounce
+   — эта кнопка встречается только на экране победы, поэтому применяется
+   безусловно всем :not(:disabled) экземплярам (без ожидания рекламы
+   класс .unavailable уже сам по себе — :disabled, пульс не идёт вхолостую). */
+@keyframes adRewardPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
+.ad-reward-btn:not(:disabled) { animation: adRewardPulse 1.7s ease-in-out infinite; }
+.ad-reward-btn:not(:disabled):hover,
+.ad-reward-btn:not(:disabled):active { animation-play-state: paused; }
+
+/* Тестовая заглушка рекламы (площадка не подключена — локальный запуск/QA)
+   — явно помечена как тест, чтобы никто не спутал с настоящим показом. */
+.ad-test-overlay {
+  position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center;
+  background: rgba(5,5,20,.88);
+}
+.ad-test-box {
+  max-width: 22em; text-align: center; padding: 1.4em 1.6em; border-radius: var(--r-xl);
+  background: linear-gradient(var(--royal-1), var(--royal-3)); border: 4px solid var(--ink);
+  box-shadow: 0 12px 28px rgba(0,0,0,.5);
+}
+.ad-test-badge {
+  display: inline-block; font-family: 'Lilita One', sans-serif; font-size: 1.1em;
+  color: var(--gold-text); margin-bottom: .4em;
+}
+.ad-test-box p { font-size: .85em; opacity: .9; margin: 0 0 .8em; }
+.ad-test-bar { height: .6em; border-radius: 999px; background: rgba(0,0,0,.35); border: 2px solid var(--ink); overflow: hidden; }
+.ad-test-bar-fill {
+  height: 100%; width: 0%; background: linear-gradient(90deg, var(--cta-1), var(--cta-2));
+  animation: adTestFill 2.1s linear forwards;
+}
+@keyframes adTestFill { from { width: 0%; } to { width: 100%; } }
+
+/* Громкое уведомление (ошибка покупки/рекламы) — не может быть тихим по
+   требованию задачи: недоступный товар/реклама должны быть явно видны
+   игроку, а не проглочены молча. */
+.loud-notice {
+  position: fixed; left: 50%; bottom: 1.5em; transform: translate(-50%, 20px);
+  max-width: min(30em, 90vw); z-index: 600; text-align: center;
+  padding: .8em 1.2em; border-radius: var(--r-lg);
+  background: linear-gradient(var(--alert-1), var(--alert-2)); color: #3a0d02;
+  border: 3px solid var(--ink); box-shadow: 0 8px 20px rgba(0,0,0,.5);
+  font-weight: 600; opacity: 0; transition: opacity .25s ease, transform .25s ease;
+}
+.loud-notice.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Утренняя правка основателя: сине-красная гамма была вчера жёстко вшита
+   только в магазин — теперь это ПОКУПНАЯ тема на весь интерфейс (меню,
+   магазин, HUD, пауза, итоги), по умолчанию — классика. Механизм: почти
+   вся разметка уже красится через переменные (royal, cta, secondary,
+   alert, gold-text — см. :root выше) — тема лишь переопределяет их под
+   классом на body (см. THEMES в data.js, applyTheme() в game.js).
+   Третья/четвёртая тема — просто ещё один такой блок плюс запись в
+   THEMES, без правок разметки. */
+body.theme-blue-red {
+  --royal-1: #3a4fd0;
+  --royal-2: #1a2470;
+  --royal-3: #0c1442;
+  --cta-1: #ff7a45;
+  --cta-2: #e8391f;
+  --cta-shadow: #8a1c0e;
+  --secondary-1: #4f6fd8;
+  --secondary-2: #26327a;
+  --secondary-shadow: #131a4a;
+  --alert-1: #ff5470;
+  --alert-2: #c81f3f;
+  --alert-shadow: #6e0f22;
+  --gold-text: #8fe0ff;
+}
+
+/* ---------- Touch controls ---------- */
+/* bottom-офсет учитывает safe-area (вырез/домашняя полоса) — без этого на
+   части телефонов джойстик и кнопки атаки/спец-удара уходили за нижний
+   край экрана и не отрисовывались (жалоба основателя, раунд 5). */
+#touchControls { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+#joyBase {
+  position: absolute; left: 4%; bottom: calc(8% + env(safe-area-inset-bottom, 0px));
+  width: 22vmin; height: 22vmin; max-width:110px; max-height:110px;
+  border-radius: 50%; background: rgba(255,255,255,.1); border: 3px solid var(--ink);
+  pointer-events: auto; touch-action: none;
+}
+#joyStick {
+  position: absolute; left: 50%; top: 50%; width: 45%; height: 45%; border-radius: 50%;
+  background: rgba(255,232,115,.65); border: 2px solid var(--ink); transform: translate(-50%,-50%);
+}
+/* Стадия 2 (баг-репорт, третье замечание про эту зону подряд): джойстик в
+   самом левом нижнем углу стоял прямо на спрайте своей крепости/героя и
+   полностью его закрывал весь матч. Сдвигаем правее+ниже (уходит с базы,
+   ближе к самому краю экрана) и делаем заметно прозрачнее — тач-зона та
+   же, видно сквозь неё. */
+@media (pointer: coarse) {
+  #joyBase {
+    left: 9%; bottom: calc(3% + env(safe-area-inset-bottom, 0px));
+    background: rgba(255,255,255,.06); border-color: rgba(15,15,46,.55);
+  }
+  #joyStick { background: rgba(255,232,115,.4); border-color: rgba(15,15,46,.55); }
+}
+.touch-actions {
+  position: absolute; right: 4%; bottom: calc(8% + env(safe-area-inset-bottom, 0px));
+  display: flex; gap: 3vmin; pointer-events: auto;
+}
+.touch-btn {
+  position: relative; min-width: 48px; min-height: 48px; width: 15vmin; height: 15vmin; max-width: 74px; max-height: 74px; border-radius: 50%;
+  background: linear-gradient(var(--secondary-1), var(--secondary-2)); color: var(--gold-text);
+  font-size: 1.6em; touch-action: none; overflow: hidden;
+  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+}
+/* Кулдаун атаки/спец-удара/кирки — прямо на самих кнопках (раунд 5), не на
+   перках нижней панели (та скрыта на мобильном, см. ниже). */
+.cd-overlay-round {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 0%;
+  background: rgba(0,0,0,.65); pointer-events: none;
+}
+/* На очень невысоких альбомных экранах (маленькие телефоны) поджимаем
+   отступ и размер, чтобы кнопки не подъезжали к самому краю. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 420px) {
+  #joyBase, .touch-actions { bottom: calc(4% + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Раунд 5 — на мобильном перк-кнопки спец-удара/кирки на нижней панели
+   скрыты: их кулдаун переехал на кнопки атаки/спец/копать в touch-actions
+   (см. cd-overlay-round выше); сама панель покупки юнитов (toolbar) на
+   мобильном остаётся — это не «перк», а основной способ играть. */
+@media (pointer: coarse) {
+  #specialBtn, #pickaxeBtn, #cryBtn { display: none; }
+}
+
+/* Компактный режим на низких вьюпортах — та самая ситуация с телефона
+   (широкий, но невысокий альбомный экран, адресная строка съедает высоту
+   сильнее, чем в эмуляторе): уменьшаем отступы/шрифты/зазоры, чтобы контент
+   в принципе имел шанс поместиться без скролла, а не полагались только на
+   overflow-y выше. Блок специально в САМОМ КОНЦЕ файла: раньше стоял
+   раньше базовых правил .panel-card/.shop-list/.menu-btn и МОЛЧА проигрывал
+   им по правилу "при равной специфичности побеждает более поздний в
+   источнике" — переопределения физически не применялись, хотя выглядели
+   правильными по коду (найдено не чтением кода, а тем, что счётчик
+   карточек в живом тесте не менялся при правках — верный признак, что CSS
+   не доходит до элемента). */
+@media (max-height: 460px) {
+  .screen { gap: .35em; padding: .4em; }
+  .screen h1 { font-size: 1.4em; margin: 0; }
+  .panel-card, .popup-card { padding: .6em .8em; gap: .35em; max-height: 96vh; }
+  .panel-card h2, .popup-card h2 { font-size: .95em; margin: 0; padding: .15em .8em; }
+  .menu-btn { min-height: 36px; padding: .3em .8em; font-size: .85em; }
+  /* Без этих трёх строк компактный режим уравнивал ВСЕ .menu-btn к одной
+     высоте (правило выше побеждает более специфичные .primary-big/.small
+     по specificity ниже, но здесь наоборот — эти явно перечисляют классы,
+     специфичнее голого .menu-btn, поэтому сохраняют иерархию размеров
+     даже на низком экране, не только на десктопе). */
+  .menu-btn.primary-big { min-height: 46px; font-size: 1.25em; padding: .35em 1.4em; }
+  .menu-btn.small { min-height: 28px; padding: .2em .7em; font-size: .78em; }
+  .shop-list { max-height: none; padding: .4em; gap: .35em; }
+  .shop-item { padding: .35em .6em; min-height: 40px; gap: .15em; }
+  .shop-section-title { margin: .3em 0 -.05em; padding: .1em .2em; }
+  .shop-header-row .shop-currency { padding: .15em .5em; font-size: .85em; }
+  /* Утро 08.09.2026 (баг-репорт основателя — скролл на экране победы на
+     мобильном ландшафте): на финале главы там 2 кнопки рекламы, стопкой
+     они не помещаются по высоте даже после общего сжатия. В ряд вместо
+     столбца — та же суммарная информация, но одна строка высоты вместо
+     двух. */
+  .ad-reward-row { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: .3em; }
+  .ad-reward-btn { font-size: .78em; padding: .3em .7em; min-height: 34px; }
+  .result-reward-value { font-size: 1.3em; }
+}
+
+/* ===================================================================
+   RTL (арабский) — ТЗ_ЛОКАЛИЗАЦИЯ_11_ЯЗЫКОВ.md, п.4: зеркалим ТОЛЬКО
+   текстовые контейнеры интерфейса (меню/магазин/попапы/справка) — им
+   i18n.js (I18N.applyDirection()) ставит dir="rtl" на .screen-элементы.
+   Игровое поле (#stage/#hud/тулбар/джойстик) — отдельные соседние узлы
+   вне .screen, dir на них не попадает и не должен: «слева игрок, справа
+   враг» — часть игровой механики, не UI-условность (см. КОНЦЕПТ_ГДД.md,
+   «Допущения»). Flex-строки (.si-header/.help-item/.playlist-row/…)
+   мирроятся автоматически через CSS direction, отдельных row-reverse не
+   нужно — переопределяем только явные text-align:left, которые иначе не
+   подхватывают direction сами (по умолчанию у остальных элементов
+   text-align:start и так следует за direction). */
+[dir="rtl"] {
+  direction: rtl;
+}
+[dir="rtl"] .shop-item,
+[dir="rtl"] .playlist-name {
+  text-align: right;
+}

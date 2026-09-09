@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Две крепости</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="rotatePrompt">
+  <div class="icon">⟳</div>
+  <p data-i18n-html="rotate.text">Поверните устройство горизонтально —<br>игра рассчитана на альбомную ориентацию.</p>
+</div>
+<div id="stage">
+  <canvas id="backdrop"></canvas>
+  <div id="arenaWrap">
+    <canvas id="game" width="1000" height="400"></canvas>
+
+    <div id="hud" class="hidden">
+      <div class="hud-top">
+        <div class="core-box core-player">
+          <div class="core-label">HP</div>
+          <div class="bar bar-hp-player"><div class="bar-fill" id="playerCoreFill"></div></div>
+          <div class="bar-text" id="playerCoreText">1000/1000</div>
+          <div class="gold-row" id="goldRow" data-i18n-title="hud.goldTooltip" title="Слишком много накопленного золота усиливает врага"><span class="gold-dot"></span><span id="goldText">0</span></div>
+          <div class="diamond-row"><span class="diamond-dot"></span><span id="diamondText">0</span></div>
+        </div>
+        <div class="mission-title" id="missionTitle">Миссия 1</div>
+        <div class="core-box core-enemy">
+          <div class="core-label">HP</div>
+          <div class="bar bar-hp-enemy"><div class="bar-fill" id="enemyCoreFill"></div></div>
+          <div class="bar-text" id="enemyCoreText">1000/1000</div>
+        </div>
+        <button id="helpBtn" class="icon-btn" data-i18n-title="hud.helpTooltip" title="Подсказка по управлению">?</button>
+        <button id="pauseBtn" class="icon-btn" data-i18n-title="hud.pauseTooltip" title="Пауза (P)">⏸</button>
+        <!-- Правка (баг-репорт основателя, скриншот 1788791898991.jpg):
+             при фиксированном top в em плашка налезала на полосу HP врага
+             и заголовок миссии, если он переносился на 2 строки (реальный
+             телефон в альбомной ориентации — там ряд .hud-top заметно
+             выше, чем в широком десктопном тесте). Плашка — теперь
+             последний ребёнок именно .hud-top (не .hud-bottom), позиция
+             в CSS считается от РЕАЛЬНОЙ высоты этого ряда (top:100%), не
+             от угаданного em — подстраивается сама и под 1-строчный, и
+             под 2-строчный заголовок. -->
+        <div id="heroReviveBox" class="hero-revive-box hidden">
+          <span><span data-i18n="hud.heroFallenLabel">Капитан пал:</span> <b id="heroReviveTimer">0:00</b></span>
+          <button id="btnBuyback" class="menu-btn secondary"><span data-i18n="hud.buybackLabel">Выкупить (B) —</span> <span id="buybackCostText">50</span> <span class="gold-dot"></span></button>
+        </div>
+      </div>
+
+      <div class="hud-bottom">
+        <div id="firstMissionHint" class="first-hint hidden">
+          <span id="firstHintLine1"></span><br>
+          <span data-i18n-html="hud.firstHintLine2">Юниты держат линию, но <b>основной урон по крепости наносит герой</b> — без него один экономикой крепость не взять.</span>
+        </div>
+        <div class="hud-bottom-row">
+          <div class="hero-mini">
+            <div class="hero-mini-icon">★</div>
+            <div class="bar bar-hp-hero"><div class="bar-fill" id="heroFill"></div></div>
+          </div>
+          <div class="toolbar" id="toolbar">
+            <!-- кнопки юнитов генерируются в game.js -->
+          </div>
+          <button class="tool-btn special-btn" id="specialBtn" data-i18n-title="hud.specialTooltip" title="Спец-удар (R)">
+            <div class="tool-icon">✦</div>
+            <div class="cd-overlay" id="specialCd"></div>
+            <div class="tool-key">R</div>
+          </button>
+          <button class="tool-btn special-btn" id="pickaxeBtn" data-i18n-title="hud.pickaxeTooltip" title="Кирка (F)">
+            <div class="tool-icon">⛏</div>
+            <div class="cd-overlay" id="pickaxeCd"></div>
+            <div class="tool-key">F</div>
+          </button>
+          <button class="tool-btn special-btn hidden" id="cryBtn" data-i18n-title="hud.cryTooltip" title="Боевой клич (E)">
+            <div class="tool-icon">📣</div>
+            <div class="cd-overlay" id="cryCd"></div>
+            <div class="tool-key">E</div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="countdownOverlay" class="hidden">
+      <div id="countdownNum">3</div>
+    </div>
+
+    <div id="heroDownFlash"></div>
+
+    <div id="touchControls" class="hidden">
+      <div id="joyBase"><div id="joyStick"></div></div>
+      <!-- Основатель: "интуитивно удобнее, когда кнопки по разные стороны" —
+           атака и кирка поменяны местами (⛏ ✦ ⚔ 📣), спец-удар и Боевой
+           клич остались на прежних позициях. Только порядок в разметке —
+           id, обработчики и хоткеи на ПК не менялись. -->
+      <div class="touch-actions">
+        <button id="touchPickaxe" class="touch-btn">
+          ⛏<div class="cd-overlay-round" id="touchPickaxeCd"></div>
+        </button>
+        <button id="touchSpecial" class="touch-btn">
+          ✦<div class="cd-overlay-round" id="touchSpecialCd"></div>
+        </button>
+        <button id="touchAttack" class="touch-btn">
+          ⚔<div class="cd-overlay-round" id="touchAttackCd"></div>
+        </button>
+        <button id="touchCry" class="touch-btn hidden">
+          📣<div class="cd-overlay-round" id="touchCryCd"></div>
+        </button>
+      </div>
+    </div>
+
+    <div id="screenMenu" class="screen hidden">
+      <h1 data-i18n="game.title">ДВЕ КРЕПОСТИ</h1>
+      <button class="menu-btn primary-big" id="btnPlay" data-i18n="menu.play">Играть</button>
+      <button class="menu-btn secondary" id="btnShop" data-i18n="menu.shop">🛒 Магазин</button>
+      <button class="menu-btn secondary" id="btnPlaylist" data-i18n="menu.playlist">🎵 Плейлист</button>
+      <div class="mute-row">
+        <button class="menu-btn secondary small" id="btnMute">🔊 Звук: вкл</button>
+        <button class="menu-btn secondary small" id="btnMuteMusic">🎵 Музыка: вкл</button>
+      </div>
+    </div>
+
+    <div id="screenMissions" class="screen hidden">
+      <div class="panel-card">
+        <h2 data-i18n="missions.title">Выбор главы</h2>
+        <div class="chapter-trail" id="chapterTrail"></div>
+        <button class="menu-btn secondary" id="btnBackToMenu" data-i18n="missions.back">Назад</button>
+      </div>
+    </div>
+
+    <div id="screenShop" class="screen hidden">
+      <div class="panel-card">
+        <div class="shop-header-row">
+          <div class="shop-header-left">
+            <h2 data-i18n="shop.title">Магазин</h2>
+            <p class="shop-currency"><span class="diamond-dot"></span> <b id="shopCurrencyText">0</b></p>
+          </div>
+          <button class="menu-btn secondary small" id="btnBackFromShop" data-i18n="shop.back">Назад</button>
+        </div>
+        <div class="shop-list" id="shopList"></div>
+      </div>
+    </div>
+
+    <div id="screenHelp" class="screen overlay hidden">
+      <div class="panel-card">
+        <h2 data-i18n="help.title">Справка</h2>
+        <div class="shop-list" id="helpList"></div>
+        <button class="menu-btn secondary" id="btnBackFromHelp" data-i18n="help.back">Назад</button>
+      </div>
+    </div>
+
+    <div id="screenPause" class="screen overlay hidden">
+      <div class="popup-card">
+        <h2 data-i18n="pause.title">Пауза</h2>
+        <div class="mute-row">
+          <button class="menu-btn secondary" id="btnMutePause">🔊 Звук: вкл</button>
+          <button class="menu-btn secondary" id="btnMuteMusicPause">🎵 Музыка: вкл</button>
+        </div>
+        <button class="menu-btn" id="btnResume" data-i18n="pause.resume">Продолжить</button>
+        <button class="menu-btn secondary" id="btnToMenuFromPause" data-i18n="pause.toMenu">В меню</button>
+      </div>
+    </div>
+
+    <div id="screenPlaylist" class="screen hidden">
+      <div class="panel-card">
+        <h2 data-i18n="playlist.title">Плейлист</h2>
+        <div class="playlist-list" id="playlistList"></div>
+        <button class="menu-btn secondary" id="btnShuffle">🔀 Перемешать: выкл</button>
+        <button class="menu-btn secondary" id="btnBackFromPlaylist" data-i18n="playlist.back">Назад</button>
+      </div>
+    </div>
+
+    <div id="screenResult" class="screen overlay hidden">
+      <div class="popup-card" id="resultCard">
+        <h2 id="resultTitle">Победа!</h2>
+        <p id="resultText"></p>
+        <p class="result-reward hidden" id="resultReward">
+          <span class="result-reward-label" data-i18n="result.rewardLabel">Очков за миссию</span>
+          <span class="result-reward-value"><span id="resultRewardAmount">0</span><span class="diamond-dot"></span></span>
+        </p>
+        <div class="ad-reward-row hidden" id="resultAdRow"></div>
+        <button class="menu-btn" id="btnNext" data-i18n="result.next">Далее</button>
+        <button class="menu-btn secondary" id="btnShopFromResult" data-i18n="menu.shop">🛒 Магазин</button>
+        <button class="menu-btn secondary" id="btnRetry" data-i18n="result.retry">Повторить</button>
+        <button class="menu-btn secondary" id="btnToMenuFromResult" data-i18n="result.toMenu">В меню</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>window.GAME_PLATFORM='vk';</script>
+<script src="js/i18n.js"></script>
+<script src="js/data.js"></script>
+<script src="js/save.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/platform.js"></script>
+<script src="js/rig.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
