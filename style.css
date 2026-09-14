@@ -41,6 +41,19 @@ html, body {
   font-family: 'Fredoka', 'Segoe UI', Tahoma, Verdana, sans-serif;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
+  /* Модерация (2026-09-14, замечания 6-7, п.1.6.2.7/1.6.1.8): раньше
+     user-select:none стоял только на .arena — клик/долгий тач ЛЮБОГО
+     другого места интерфейса (HUD, магазин, попапы) выделял текст на
+     десктопе и открывал iOS-коллаут "Скопировать/Найти" с ручками
+     выделения. Нет ни одного текстового поля в игре (см. index.html —
+     инпутов нет), так что выделение текста нигде не нужно функционально.
+     -webkit-user-select — для Safari/iOS, обычный user-select — для
+     остальных. -webkit-touch-callout — отдельное от user-select свойство
+     именно для iOS-коллаута по долгому тапу, без него один user-select не
+     убирает меню "Скопировать" на iPhone/iPad. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 #stage {
   height: 100%; display: flex; align-items: center; justify-content: center;

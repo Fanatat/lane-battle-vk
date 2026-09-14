@@ -65,6 +65,13 @@ const SFX = (() => {
     setMuted(v) { muted = v; },
     isMuted() { return muted; },
     unlock() { ensure(); },
+    // Скрытая/неактивная вкладка (модерация, п.1.3 — см. document.
+    // visibilitychange в game.js) — тем же способом, что MUSIC.pauseForAd:
+    // suspend() всего контекста замораживает любой SFX, который случайно
+    // доигрывает в момент сворачивания, вместо того чтобы дать ему дозвучать
+    // в фоне.
+    suspend() { if (ctx) ctx.suspend().catch(() => {}); },
+    resume() { if (ctx) ctx.resume().catch(() => {}); },
     // роль атакующего задаёт тембр удара — тяжёлый глухой, копьё резкое,
     // герой отдельно узнаваем (см. ГДД, «Аудио: звук на все события мира»)
     hitMelee(role) {
@@ -98,53 +105,49 @@ const SFX = (() => {
   };
 })();
 
-// Музыка (раунд 10) — реальные mp3-треки (Suno), процедурный WebAudio-луп
-// раунда 5 полностью убран (основатель прослушал — «очень посредственно»,
-// см. КОНЦЕПТ_ГДД.md). Канал НЕЗАВИСИМ от SFX: свой мьют, свой источник
-// звука (<audio>, не WebAudio-осцилляторы) — «никогда не смешивать» было
-// прямым требованием основателя. Кроссфейд — ручной fade двух <audio>
-// одновременно, без Web Audio graph: для двух перекрёстно затухающих
-// mp3-файлов этого достаточно, не усложняем.
+// Музыка (раунд 10, переведена на Web Audio API 2026-09-14) — реальные
+// mp3-треки (Suno), процедурный WebAudio-луп раунда 5 полностью убран
+// (основатель прослушал — «очень посредственно», см. КОНЦЕПТ_ГДД.md).
+// Канал НЕЗАВИСИМ от SFX (свой мьют, свой gain-граф) — «никогда не
+// смешивать» было прямым требованием основателя, это по-прежнему так: у
+// музыки свой AudioContext и свой master-gain, SFX его не трогает.
+//
+// ВАЖНО (модерация Яндекса, замечания 4-5, 2026-09-14): раньше канал играл
+// через HTMLMediaElement (<audio>). Chrome/Android автоматически показывает
+// системный медиаплеер (десктоп) и уведомление о воспроизведении
+// (Android/lock screen) для ЛЮБОГО играющего <audio>/<video> — независимо от
+// того, вызывает ли страница Media Session API сама (см. приложенная статья
+// Chrome for Developers). Единственный надёжный способ убрать оба — не
+// использовать HTMLMediaElement вообще. Здесь музыка декодируется в
+// AudioBuffer и играет через AudioBufferSourceNode + GainNode, как SFX, но
+// по отдельному графу — Web Audio узлы не подпадают под авто-детект медиа.
 const MUSIC = (() => {
+  let ctx = null;
+  let masterGain = null; // мьют + громкость от числа юнитов (effectiveVolume)
   let musicMuted = false;
   let baseVolume = 0.7;
   let unitVolumeMult = 1; // множитель от числа юнитов на поле (см. setUnitCount)
-  let current = null; // { audio, trackId, fading }
+  let current = null; // { trackId, buffer, source, gain, startedAt, offset, pausedOffset, adPaused, fading, manualStop, ended }
   let endedCb = null;
+  const bufferCache = new Map(); // file -> Promise<AudioBuffer>, чтобы не перекачивать/передекодировать один трек на каждый play()
 
-  function trackMeta(trackId) {
-    if (trackId === 'menu') return MENU_MUSIC_TRACK;
-    return MUSIC_TRACKS[trackId] || EVENT_TRACKS[trackId];
+  function ensureCtx() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = ctx.createGain();
+      masterGain.gain.value = effectiveVolume();
+      masterGain.connect(ctx.destination);
+    }
+    // Автоплей до первого пользовательского жеста браузер не запрещает на
+    // уровне start() (он ставится в очередь на таймлайне контекста), но сам
+    // контекст рождается 'suspended' и не тикает — значит трек просто висит
+    // неслышимым до первого жеста, а не проигрывается тихо/криво. Ретрай на
+    // жест — ниже, armResumeOnGesture().
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
   }
-  function effectiveVolume() {
-    return musicMuted ? 0 : baseVolume * unitVolumeMult;
-  }
-  // Несколько fadeTo на один и тот же <audio> одновременно (например,
-  // setUnitCount дёргается почти каждый кадр, пока юниты гибнут пачками, и
-  // накладывается на ещё не завершённый кроссфейд) писали в audio.volume
-  // из разных независимых rAF-циклов с разными опорными start/t0 —
-  // экстраполяция от рассинхронизированных точек иногда даёт волну чуть
-  // ниже 0, а `audio.volume` бросает исключение на значении вне [0,1]
-  // (баг-репорт живого QA, раунд 10). Fix — счётчик поколений на элементе:
-  // новый fadeTo отменяет предыдущий цикл того же <audio>, плюс clamp на
-  // случай остаточной погрешности плавающей точки.
-  function fadeTo(audio, target, dur, onDone) {
-    const gen = (audio._fadeGen || 0) + 1;
-    audio._fadeGen = gen;
-    const start = audio.volume, t0 = performance.now();
-    (function step(now) {
-      if (audio._fadeGen !== gen) return; // отменён более новым fadeTo
-      const p = dur <= 0 ? 1 : Math.min(1, (now - t0) / (dur * 1000));
-      audio.volume = Math.max(0, Math.min(1, start + (target - start) * p));
-      if (p < 1) requestAnimationFrame(step);
-      else if (onDone) onDone();
-    })(t0);
-  }
-
-  // Ретрай воспроизведения на первый реальный пользовательский жест —
-  // браузер разрешает play() только после него (см. play() выше).
-  function armResumeOnGesture(audio) {
-    const retry = () => { audio.play().catch(() => {}); cleanup(); };
+  function armResumeOnGesture() {
+    const retry = () => { if (ctx) ctx.resume().catch(() => {}); cleanup(); };
     function cleanup() {
       document.removeEventListener('pointerdown', retry, true);
       document.removeEventListener('keydown', retry, true);
@@ -153,58 +156,138 @@ const MUSIC = (() => {
     document.addEventListener('keydown', retry, true);
   }
 
+  function trackMeta(trackId) {
+    if (trackId === 'menu') return MENU_MUSIC_TRACK;
+    return MUSIC_TRACKS[trackId] || EVENT_TRACKS[trackId];
+  }
+  function effectiveVolume() {
+    return musicMuted ? 0 : baseVolume * unitVolumeMult;
+  }
+  function loadBuffer(file) {
+    if (!bufferCache.has(file)) {
+      bufferCache.set(file, fetch(file)
+        .then((r) => r.arrayBuffer())
+        .then((data) => ensureCtx().decodeAudioData(data)));
+    }
+    return bufferCache.get(file);
+  }
+  // Плавный переход gain-узла — через нативную автоматизацию AudioParam, не
+  // через rAF-цикл (как было у <audio>.volume раньше): cancelScheduledValues
+  // + фиксация текущего значения перед новым ramp'ом сама по себе исключает
+  // старый баг гонки нескольких fadeTo на одном узле (тикает по аудио-часам,
+  // а не по независимым rAF-циклам с разъезжающимися t0).
+  function fadeGain(gainNode, target, dur) {
+    const c = ensureCtx();
+    const now = c.currentTime;
+    const safeTarget = Math.max(0, Math.min(1, target));
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+    gainNode.gain.linearRampToValueAtTime(safeTarget, now + Math.max(dur, 0.01));
+  }
+  function currentOffset(entry) {
+    if (!entry || !entry.buffer) return 0;
+    // ctx.currentTime не тикает, пока контекст suspended (см. pauseForAd) —
+    // поэтому это выражение само "замирает" на паузе, без отдельного флага.
+    const raw = entry.offset + (ctx.currentTime - entry.startedAt);
+    return entry.loop ? raw % entry.buffer.duration : raw;
+  }
+  function startSource(entry) {
+    const c = ensureCtx();
+    const source = c.createBufferSource();
+    source.buffer = entry.buffer;
+    source.loop = entry.loop;
+    source.connect(entry.gain);
+    source.addEventListener('ended', () => {
+      if (entry.manualStop) { entry.manualStop = false; return; } // сами остановили (кроссфейд на новый трек) — не событие "трек доиграл"
+      if (current === entry && endedCb) endedCb(entry.trackId);
+    });
+    source.start(0, 0);
+    entry.source = source;
+    entry.offset = 0;
+    entry.startedAt = c.currentTime;
+  }
+  function stopSource(entry) {
+    if (!entry.source || entry.stopped) return;
+    entry.stopped = true;
+    entry.manualStop = true;
+    try { entry.source.stop(); } catch (e) { /* уже остановлен/доиграл */ }
+  }
+
   return {
     setMusicMuted(v) {
       musicMuted = v;
-      if (current) fadeTo(current.audio, effectiveVolume(), 0.3);
+      if (masterGain) fadeGain(masterGain, effectiveVolume(), 0.3);
     },
     isMusicMuted() { return musicMuted; },
     // Динамическая громкость от количества живых юнитов на поле (раунд 10,
     // MUSIC_MIX.unitsForMaxVolume/volumeBoostAtMaxUnits) — не режет резко,
-    // применяется тем же fadeTo с коротким временем сглаживания.
+    // применяется тем же fadeGain с коротким временем сглаживания.
     setUnitCount(n) {
       const frac = Math.max(0, Math.min(1, n / MUSIC_MIX.unitsForMaxVolume));
       const mult = 1 + frac * MUSIC_MIX.volumeBoostAtMaxUnits;
       if (Math.abs(mult - unitVolumeMult) < 0.01) return;
       unitVolumeMult = mult;
-      if (current && !current.fading) fadeTo(current.audio, effectiveVolume(), 0.4);
+      if (current && !current.fading && masterGain) fadeGain(masterGain, effectiveVolume(), 0.4);
     },
     play(trackId, opts = {}) {
       const meta = trackMeta(trackId);
       if (!meta) return;
       if (current && current.trackId === trackId && !opts.force) return;
       const dur = opts.instant ? 0.05 : MUSIC_MIX.crossfadeSec;
-      const audio = new Audio(meta.file);
-      audio.loop = trackId === 'menu'; // меню/пауза — простой луп, без плейлиста
-      audio.volume = 0;
-      audio.addEventListener('ended', () => { if (endedCb) endedCb(trackId); });
-      // Автоплей до первого пользовательского жеста браузер молча блокирует
-      // (`play()` реджектится, `audio.paused` остаётся true) — без ретрая
-      // это означает, что музыка меню НИКОГДА не звучит игроку, который
-      // сначала полистал меню/магазин, а не сразу нажал «Играть» (баг-репорт
-      // живого QA, ночная правка). Регистрируем ретрай на первый же жест.
-      const tryPlay = () => audio.play().catch(() => armResumeOnGesture(audio));
-      tryPlay();
-      fadeTo(audio, effectiveVolume(), dur);
+      const c = ensureCtx();
+      armResumeOnGesture();
+      const entry = {
+        trackId,
+        loop: trackId === 'menu', // меню/пауза — простой луп, без плейлиста
+        buffer: null,
+        source: null,
+        gain: c.createGain(),
+        startedAt: 0,
+        offset: 0,
+        fading: true,
+        manualStop: false,
+        stopped: false,
+      };
+      entry.gain.gain.value = 0;
+      entry.gain.connect(masterGain);
       const old = current;
-      current = { audio, trackId, fading: true };
-      setTimeout(() => { if (current && current.audio === audio) current.fading = false; }, dur * 1000 + 50);
-      if (old) fadeTo(old.audio, 0, dur, () => { old.audio.pause(); old.audio.src = ''; });
+      current = entry;
+      loadBuffer(meta.file).then((buffer) => {
+        if (current !== entry) return; // успели переключиться на другой трек, пока этот декодировался
+        entry.buffer = buffer;
+        startSource(entry);
+        fadeGain(entry.gain, 1, dur);
+        setTimeout(() => { if (current === entry) entry.fading = false; }, dur * 1000 + 50);
+      });
+      if (old) {
+        fadeGain(old.gain, 0, dur);
+        setTimeout(() => { stopSource(old); old.gain.disconnect(); }, dur * 1000 + 50);
+      }
     },
     current() { return current ? current.trackId : null; },
     // Для живой диагностики (утренняя проверка баг-репортов) — реальное
-    // состояние аудио-элемента, не только "назначенный" трек.
+    // состояние текущего трека, не только "назначенный" trackId.
     debugState() {
       if (!current) return null;
-      return { trackId: current.trackId, paused: current.audio.paused, volume: current.audio.volume, currentTime: current.audio.currentTime };
+      return {
+        trackId: current.trackId,
+        paused: !!ctx && ctx.state === 'suspended',
+        volume: current.gain ? current.gain.gain.value : 0,
+        currentTime: currentOffset(current),
+      };
     },
-    stop() { if (current) { current.audio.pause(); current = null; } },
+    stop() { if (current) { stopSource(current); current.gain.disconnect(); current = null; } },
     onEnded(cb) { endedCb = cb; },
     // Пауза/возобновление трека на время полноэкранной рекламы (требование
-    // площадок — Яндекс п.4.7: звук и игровой процесс должны ставиться на
-    // паузу при показе interstitial/rewarded video). Не трогает current —
-    // трек продолжается с той же позиции, не перезапускается.
-    pauseForAd() { if (current) current.audio.pause(); },
-    resumeAfterAd() { if (current && current.audio.paused) current.audio.play().catch(() => {}); },
+    // площадок — Яндекс п.4.7) и на время скрытой/неактивной вкладки
+    // (требования модерации, п.1.3 — см. document.visibilitychange в
+    // game.js). Раньше на <audio> это было .pause()/.play(); на Web Audio
+    // самый надёжный аналог — suspend()/resume() всего контекста: это
+    // замораживает буквально всё (currentTime, все запланированные
+    // gain-автоматизации, позицию источника) одной операцией, без ручного
+    // учёта смещения внутри буфера — и восстанавливает ровно с того же
+    // места без щелчков и пересоздания узлов.
+    pauseForAd() { if (ctx) ctx.suspend().catch(() => {}); },
+    resumeAfterAd() { if (ctx) ctx.resume().catch(() => {}); },
   };
 })();

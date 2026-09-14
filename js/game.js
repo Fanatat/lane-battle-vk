@@ -125,28 +125,67 @@ MUSIC.setMusicMuted(!!progress.musicMuted);
 // (Яндекс, требования к игре, п.4.7) — см. frame() ниже и adPlaying.
 let adPlaying = false;
 PLATFORM.setPauseHooks(
-  () => { adPlaying = true; MUSIC.pauseForAd(); },
-  () => { adPlaying = false; MUSIC.resumeAfterAd(); }
+  () => { adPlaying = true; MUSIC.pauseForAd(); SFX.suspend(); },
+  () => { adPlaying = false; if (!pageHidden) { MUSIC.resumeAfterAd(); SFX.resume(); } }
 );
+// Модерация (2026-09-14, замечания 2-3, п.1.3): звук/музыка не должны играть
+// со свёрнутой страницей или в фоновой вкладке — раньше на это не было
+// вообще никакого хука (в отличие от рекламы выше). document.hidden — общий
+// сигнал и для сворачивания, и для переключения вкладки, так что одного
+// слушателя достаточно на оба случая. Отдельный флаг, а не переиспользование
+// adPlaying напрямую: показ рекламы и скрытие вкладки — независимые
+// причины паузы, и обе могут наложиться (например, реклама показана именно
+// в момент, когда игрок переключился на другую вкладку) — resume должен
+// сработать только когда ОБЕ причины паузы снялись.
+let pageHidden = false;
+function onVisibilityChange() {
+  pageHidden = document.hidden;
+  if (pageHidden) {
+    MUSIC.pauseForAd();
+    SFX.suspend();
+  } else if (!adPlaying) {
+    MUSIC.resumeAfterAd();
+    SFX.resume();
+  }
+}
 // Незавершённые покупки прошлых сессий (сбой сети/закрытая вкладка между
 // purchase() и consumePurchase() на Яндексе) — досчитываем и выдаём, чтобы
-// оплаченный контент не терялся молча.
-PLATFORM.reconcilePurchases((key) => {
-  progress[key] = true;
-  progress[key + 'Active'] = true;
-  saveProgress(progress);
+// оплаченный контент не терялся молча. ВАЖНО (2026-09-14, попутно найдено
+// при фиксе п.2.14): раньше вызывалось СРАЗУ, на верхнем уровне скрипта —
+// то есть ДО того, как detect() в platform.js успевал хоть что-то узнать
+// про площадку (kind в этот момент всегда 'none'), а внутренняя проверка
+// `if (kind !== 'yandex' || !yandexPayments) return` тихо превращала вызов
+// в no-op КАЖДУЮ сессию. Теперь ждём PLATFORM.paymentsReady — момент, когда
+// платформа реально попыталась загрузить платежи (успешно или нет).
+PLATFORM.paymentsReady.then(() => {
+  PLATFORM.reconcilePurchases((key) => {
+    progress[key] = true;
+    progress[key + 'Active'] = true;
+    saveProgress(progress);
+  });
+  if (screen === 'shop') renderShop();
 });
 // Определение площадки асинхронное (см. platform.js) — если магазин уже
 // открыт в момент, когда оно завершилось, перерисовываем, чтобы цена/способ
-// оплаты DLC отражали реальную площадку, а не дефолт 'none'.
+// оплаты DLC отражали реальную площадку, а не дефолт 'none'. Платежи/каталог
+// грузятся отдельно и медленнее (см. PLATFORM.paymentsReady выше) — этот
+// перерендер тут нужен для площадки/языка, тот — для реальной цены DLC.
 PLATFORM.ready.then(() => { if (screen === 'shop') renderShop(); });
 
 // Облачные сохранения (см. ТЗ_ОБЛАЧНЫЕ_СОХРАНЕНИЯ.md) — best-effort
 // немедленная отправка отложенного пуша при закрытии/скрытии вкладки,
 // чтобы не терять последнее изменение (дебаунс в save.js — 3000ms).
+// Модерация (2026-09-14, замечание 6, п.1.6.2.7): правый клик по игровому
+// полю на десктопе открывал системное контекстное меню браузера
+// ("Сохранить изображение как", "Исследовать элемент" и т.п.) — блокера не
+// было вообще. Нет ни одного места в игре, где браузерное контекстное меню
+// нужно функционально (нет ссылок/картинок для сохранения игроком), поэтому
+// глушим на всём документе, а не только на арене.
+document.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 window.addEventListener('pagehide', () => { flushCloudPush(progress); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) flushCloudPush(progress);
+  onVisibilityChange();
 });
 
 // Заметное уведомление поверх интерфейса — используется там, где нельзя
@@ -1736,7 +1775,10 @@ function frame(now) {
   // Реклама за вознаграждение (Яндекс/VK) обязана ставить игровой процесс
   // на паузу, пока показывается (требования площадок, п.4.7) — см.
   // PLATFORM.setPauseHooks() выше.
-  if (adPlaying) { requestAnimationFrame(frame); return; }
+  // pageHidden — та же пауза цикла, что и на рекламе (см. onVisibilityChange
+  // выше): фоновая вкладка не должна досчитывать бой/анимации, пока
+  // невидима игроку (модерация, п.1.3).
+  if (adPlaying || pageHidden) { requestAnimationFrame(frame); return; }
   if (screen === 'match') {
     acc += dt;
     // Подсказка новичку замедляет игру на 50% (запрос основателя, раунд 5) —

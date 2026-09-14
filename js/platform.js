@@ -21,7 +21,18 @@
 
 window.GAME_PLATFORM = window.GAME_PLATFORM || 'auto';
 
-const YANDEX_SDK_URL = 'https://yandex.ru/games/sdk/v2';
+// Модерация (2026-09-14, отчёт по замечанию 1.19.1): грузили старый/неверный
+// URL SDK (games/sdk/v2 на yandex.ru, не из документации) — debug-панель
+// площадки показывала индикатор "IF" (старый лоадер). Игра размещена архивом
+// через Консоль разработчика (не свой домен) — поэтому по документации путь
+// должен быть ОТНОСИТЕЛЬНЫМ '/sdk.js', его отдаёт сервер Яндекса сам после
+// заливки билда; абсолютный путь до SDK на CDN Яндекса из документации
+// нужен только для размещения на собственном домене, здесь не тот случай.
+// ВАЖНО: не писать сюда литералом сам этот CDN-адрес (даже в комментарии) —
+// автопроверка архива в Консоли ловит его как "ссылка на сервисное
+// хранилище" и заново отклоняет билд (найдено 2026-09-14 на этой самой
+// правке — см. yandex_report/10_1.png, отдельная итерация отчёта).
+const YANDEX_SDK_URL = '/sdk.js';
 const VK_BRIDGE_URL = 'https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js';
 
 // ID товаров ИНАП в консоли Яндекс.Игр. ДОЛЖНЫ дословно совпадать с тем, что
@@ -39,6 +50,9 @@ const YANDEX_PRODUCT_IDS = {
 // уже проверено в бою в vk_platform.js (см. ТЗ_ОБЛАЧНЫЕ_СОХРАНЕНИЯ.md,
 // раздел 1): без него молчащий мост вешает игру на экране загрузки навсегда.
 const STORAGE_TIMEOUT_MS = 5000;
+// Тот же принцип — на getPayments/getCatalog/getPlayer (см. 2026-09-14,
+// регрессия п.2.14 ниже: эти вызовы раньше не имели таймаута вообще).
+const YANDEX_API_TIMEOUT_MS = 5000;
 
 const PLATFORM = (() => {
   let kind = 'none'; // 'yandex' | 'vk' | 'none' — итог определения площадки
@@ -54,6 +68,10 @@ const PLATFORM = (() => {
   let readyResolve;
   const ready = new Promise((res) => { readyResolve = res; });
   let loadingReadyCalled = false;
+  // Готовность платежей/плеера ОТДЕЛЬНО от `ready` (см. initYandex ниже) —
+  // и язык, и первый экран не должны ждать эти вызовы.
+  let paymentsResolve;
+  const paymentsReady = new Promise((res) => { paymentsResolve = res; });
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {
@@ -75,14 +93,34 @@ const PLATFORM = (() => {
     await loadScript(YANDEX_SDK_URL);
     ysdk = await window.YaGames.init();
     kind = 'yandex';
-    // Требование SDK Яндекса (п.1.13.1) — обязателен метод консумирования;
-    // каталог нужен, чтобы показывать РЕАЛЬНУЮ цену из консоли (п.1.13.4),
-    // а не захардкоженную в коде. Если что-то из этого не удалось — не
-    // валим инициализацию площадки целиком, а запоминаем ошибку, чтобы
-    // магазин мог громко предупредить при попытке купить (см. game.js).
+    // Модерация (2026-09-14, регрессия п.2.14 — "автоопределение языка не
+    // реализовано", индикатор у модератора остаётся красным): раньше
+    // getPayments/getCatalog/getPlayer вызывались ЗДЕСЬ, последовательно,
+    // БЕЗ таймаута — detect() (а значит и applyDetectedLanguage(), и
+    // readyResolve(), и через него notifyLoadingReady()) не мог завершиться,
+    // пока не отработают ВСЕ три вызова. Известный шрам студии — "заведённый
+    // товар в консоли ≠ подключённые покупки" — намекает, что эти вызовы
+    // сами по себе не всегда быстрые/надёжные; если в окружении модератора
+    // хоть один из них подвисает (не резолвится и не реджектится), язык
+    // никогда не определяется, хотя SDK и площадка тут вообще ни при чём.
+    // Требование 2.14 явно: детект языка — на старте, индикатор должен
+    // зажечься сразу, а не когда-нибудь после сети. Поэтому платежи/плеер
+    // теперь грузятся ПАРАЛЛЕЛЬНО, не блокируя ни язык, ни первый экран —
+    // см. initYandexPaymentsAndPlayer() и PLATFORM.paymentsReady в game.js.
+    initYandexPaymentsAndPlayer();
+  }
+
+  // Требование SDK Яндекса (п.1.13.1) — обязателен метод консумирования;
+  // каталог нужен, чтобы показывать РЕАЛЬНУЮ цену из консоли (п.1.13.4),
+  // а не захардкоженную в коде. Если что-то из этого не удалось — не валим
+  // инициализацию площадки целиком, а запоминаем ошибку, чтобы магазин мог
+  // громко предупредить при попытке купить (см. game.js). Каждый вызов —
+  // со своим таймаутом (см. YANDEX_API_TIMEOUT_MS выше), намеренно НЕ
+  // await'ится из initYandex() — см. комментарий там.
+  async function initYandexPaymentsAndPlayer() {
     try {
-      yandexPayments = await ysdk.getPayments({ signed: true });
-      yandexCatalog = await yandexPayments.getCatalog();
+      yandexPayments = await withTimeout(ysdk.getPayments({ signed: true }), YANDEX_API_TIMEOUT_MS);
+      yandexCatalog = await withTimeout(yandexPayments.getCatalog(), YANDEX_API_TIMEOUT_MS);
     } catch (e) {
       yandexPaymentsError = e;
     }
@@ -92,10 +130,11 @@ const PLATFORM = (() => {
     // Неавторизованный игрок — НЕ ошибка: getPlayer() даёт ID даже без
     // авторизации, setData/getData работают на этот ID как обычно.
     try {
-      yandexPlayer = await ysdk.getPlayer();
+      yandexPlayer = await withTimeout(ysdk.getPlayer(), YANDEX_API_TIMEOUT_MS);
     } catch (e) {
       yandexPlayerError = e;
     }
+    paymentsResolve();
   }
 
   async function initVk() {
@@ -164,8 +203,14 @@ const PLATFORM = (() => {
   // раньше, чем у игрока успеет отрисоваться меню.
   function notifyLoadingReady() {
     if (loadingReadyCalled) return;
-    loadingReadyCalled = true;
+    // ВАЖНО (2026-09-14, регрессия п.2.14 — см. detect() ниже): флаг
+    // ставим ТОЛЬКО когда реально вызвали ysdk.features.LoadingAPI.ready(),
+    // а не при каждом заходе в функцию. Раньше флаг ставился всегда — если
+    // первый вызов пришёлся на момент, когда kind ещё не успел стать
+    // 'yandex' (see race в detect()), настоящий вызов ready() блокировался
+    // этим же флагом НАВСЕГДА, хотя SDK чуть позже всё-таки инициализировался.
     if (kind === 'yandex' && ysdk && ysdk.features && ysdk.features.LoadingAPI) {
+      loadingReadyCalled = true;
       ysdk.features.LoadingAPI.ready();
     }
   }
@@ -196,7 +241,32 @@ const PLATFORM = (() => {
         // определялась бы как Яндекс. Реальный Яндекс-iframe грузит игру
         // именно с домена yandex.* — это и есть настоящий сигнал, SDK сам
         // по себе таковым не является.
-        await withTimeout(initYandex(), 1500);
+        //
+        // РЕГРЕССИЯ п.2.14 (2026-09-14, найдена по скриншотам панели
+        // отладки основателя — "ready called on timeout" И "I18N is not
+        // used" ОДНОВРЕМЕННО с "SDK was initialized" в той же панели):
+        // раньше здесь стоял withTimeout(initYandex(), 1500) — 1.5с мало
+        // для script load + YaGames.init() при небыстрой сети, и
+        // Promise.race молча "сдавался" в kind='none' НАВСЕГДА, пока сам
+        // initYandex() продолжал крутиться в фоне и позже ВСЁ-ТАКИ успешно
+        // ставил kind='yandex' — но applyDetectedLanguage()/readyResolve()
+        // к этому моменту уже отработали на 'none', а второго шанса не
+        // было. Отсюда и SDK "инициализирован" (правда), и язык "не
+        // определён" (тоже правда, просто по другой причине, чем кажется).
+        // Таймаут увеличен для меньшей вероятности гонки, НО главное — при
+        // опоздании больше не отбрасываем результат: если initYandex()
+        // всё же завершится успехом ПОСЛЕ таймаута, переприменяем язык и
+        // (через notifyLoadingReady(), см. её же фикс выше) лоадер.
+        const yandexAttempt = initYandex();
+        try {
+          await withTimeout(yandexAttempt, 8000);
+        } catch (e) {
+          yandexAttempt.then(() => {
+            applyDetectedLanguage();
+            I18N.applyToDOM();
+            notifyLoadingReady();
+          }).catch(() => {});
+        }
       } else {
         kind = 'none';
       }
@@ -205,6 +275,11 @@ const PLATFORM = (() => {
     }
     applyDetectedLanguage();
     readyResolve();
+    // paymentsReady резолвится ВНУТРИ initYandexPaymentsAndPlayer() для
+    // Яндекса (после реальной попытки загрузки) — здесь нужно резолвнуть
+    // его самостоятельно для ВК/локального теста, иначе PLATFORM.paymentsReady
+    // (см. game.js) никогда не сработает на этих площадках.
+    if (kind !== 'yandex') paymentsResolve();
   }
   detect();
 
@@ -284,8 +359,22 @@ const PLATFORM = (() => {
       if (!product) { resolve({ ok: false, reason: 'product-missing' }); return; }
       yandexPayments.purchase({ id: productID })
         .then((purchase) => {
-          yandexPayments.consumePurchase(purchase.purchaseToken).catch(() => {});
-          resolve({ ok: true });
+          // Модерация (2026-09-14, замечание 8, п.1.13.1): раньше
+          // consumePurchase() не await'ился (fire-and-forget) и его ошибка
+          // тихо гасилась — платформа не могла отличить "консюм прошёл" от
+          // "не прошёл и потерялся навсегда". Теперь ждём его результат
+          // явно; ревард всё равно выдаём (resolve ok:true) независимо от
+          // исхода консюма — оплата у игрока уже прошла, отказывать в
+          // товаре из-за сбоя чисто учётного вызова нельзя. Если консюм не
+          // удался — не глушим молча, а логируем громко, и он же
+          // подхватится на следующий запуск через PLATFORM.reconcilePurchases()
+          // (см. game.js) — purchaseToken останется в getPurchases() до
+          // тех пор, пока не будет успешно закрыт.
+          return yandexPayments.consumePurchase(purchase.purchaseToken)
+            .catch((consumeErr) => {
+              console.error('[platform] consumePurchase failed, будет повторено при следующем запуске:', consumeErr);
+            })
+            .then(() => resolve({ ok: true }));
         })
         .catch((err) => {
           resolve({ ok: false, reason: 'purchase-failed', error: err });
@@ -333,6 +422,11 @@ const PLATFORM = (() => {
 
   return {
     ready,
+    // Готовность платежей/каталога/плеера — отдельно от `ready` (см.
+    // initYandex): язык и первый экран не ждут её, но магазину и
+    // reconcilePurchases() всё равно нужно знать момент, когда эти данные
+    // реально появились (см. game.js).
+    paymentsReady,
     notifyLoadingReady,
     kind: () => kind,
     saveCloud(fullState) {
@@ -378,11 +472,12 @@ const PLATFORM = (() => {
             const key = Object.keys(YANDEX_PRODUCT_IDS).find((k) => YANDEX_PRODUCT_IDS[k] === p.productID);
             if (key) {
               onGrant(key);
-              yandexPayments.consumePurchase(p.purchaseToken).catch(() => {});
+              yandexPayments.consumePurchase(p.purchaseToken)
+                .catch((e) => console.error('[platform] reconcile consumePurchase failed, повторим на следующий запуск:', e));
             }
           }
         })
-        .catch(() => {});
+        .catch((e) => console.error('[platform] reconcilePurchases: getPurchases failed:', e));
     },
   };
 })();
