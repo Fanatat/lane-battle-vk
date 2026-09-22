@@ -174,6 +174,8 @@ function dealDamage(world, targetInfo, dmg, onKillTeamGold, attackerRole = 'mele
   // unit — лёгкий визуальный откат назад (не влияет на боевую логику,
   // только на отрисовку) для читаемости попадания
   ref.knockback = -ref.dir * 4;
+  // Раунд 14: хук только для VFX (искры в точке контакта), логики нет.
+  world.onHit && world.onHit(ref, attackerRole);
   if (ref.hp <= 0 && ref.state !== 'dead') {
     ref.hp = 0;
     ref.state = 'dead';
@@ -220,6 +222,9 @@ function updateUnits(world, dt, onKillTeamGold) {
           world.projectiles.push({
             team: u.team, x: u.x, y: -30, targetKind: target.kind, targetRef: target.ref,
             vx: (target.ref.x > u.x ? 1 : -1) * t.projectileSpeed, dmg: t.dmg * cryDmg, splash: t.splash || 0,
+            // Раунд 14: только для отрисовки (vfx.js — дуга полёта и вид
+            // снаряда по роли), в логике попадания не участвует.
+            x0: u.x, tx: target.ref.x, role: t.role,
           });
           SFX.shoot();
         } else {

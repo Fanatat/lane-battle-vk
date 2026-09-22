@@ -1,30 +1,40 @@
 :root {
-  /* Design system — «вариант 2» (раунд 4b): мультяшный казуальный
-     мобильный стиль, палитра в духе Clash Royale — насыщенные
-     королевские синий/фиолетовый + золото + тревожный красно-оранжевый,
-     без пастели. Применяется только к DOM-интерфейсу (canvas поля боя —
-     отдельно, не тронут). */
-  --ink: #0f0f2e;
+  /* Design system — раунд 14 (ТЗ_ВИЗУАЛ_ПОД_ОБЛОЖКУ.md): «сепия/дерево под
+     обложку» — тёплое тёмное дерево, пергамент, бронза и золото; тревожный
+     акцент — приглушённый красно-оранжевый. Никаких насыщенных синих/
+     фиолетовых (прежний «вариант 2» в духе Clash Royale, раунд 4b, ушёл в
+     платную тему body.theme-blue-red ниже). Применяется только к DOM-
+     интерфейсу; canvas поля боя красится из AGES/ART в data.js. Имена
+     переменных (royal/cta/secondary/alert) сохранены, чтобы тема из
+     магазина продолжала переопределять их без правок разметки. */
+  --ink: #1a120a;
+  --paper: #f3e7c8;
   --r-lg: 20px;
   --r-xl: 28px;
 
-  --royal-1: #4a4fd6;
-  --royal-2: #2a1f7a;
-  --royal-3: #1a1450;
+  --royal-1: #7a5636;
+  --royal-2: #4a3220;
+  --royal-3: #2a1a0e;
 
-  --cta-1: #ffe873;
-  --cta-2: #ffb300;
-  --cta-shadow: #a85e00;
+  --cta-1: #ffe08a;
+  --cta-2: #e0a030;
+  --cta-shadow: #7a4a10;
 
-  --secondary-1: #6d7bd6;
-  --secondary-2: #3a4296;
-  --secondary-shadow: #1c2160;
+  --secondary-1: #8a6a48;
+  --secondary-2: #5a4028;
+  --secondary-shadow: #2e1e10;
 
   --alert-1: #ff8a5c;
-  --alert-2: #e8391f;
-  --alert-shadow: #8a1c0e;
+  --alert-2: #c8401e;
+  --alert-shadow: #6a1e0a;
 
-  --gold-text: #ffd23f;
+  --gold-text: #ffd77a;
+
+  /* Древесное зерно — накладывается поверх градиента панелей/кнопок
+     (несколько фонов через запятую); бронзовая рамка панелей. */
+  --grain: repeating-linear-gradient(90deg, rgba(0,0,0,.07) 0 2px, rgba(255,225,180,.035) 2px 3px, transparent 3px 6px);
+  --bronze-dark: #4a3018;
+  --edge-light: rgba(255,225,180,.16);
 }
 
 * { box-sizing: border-box; }
@@ -37,7 +47,7 @@ html, body {
      обрезается без скролла. 100dvh — актуальная видимая высота, с 100%
      как фоллбэком для браузеров без поддержки dvh. */
   height: 100%; height: 100dvh;
-  background: #0a0a1e; color: #eef0ff;
+  background: #15100b; color: var(--paper);
   font-family: 'Fredoka', 'Segoe UI', Tahoma, Verdana, sans-serif;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
@@ -77,7 +87,22 @@ html, body {
      выше, чем реально видно. */
   width: min(100%, 250vh);
   width: min(100%, 250dvh);
-  max-width: 1250px;
+  /* Баг-репорт основателя 2026-09-21: на широких мониторах игра занимала
+     фиксированные 1250×500 CSS px и меньше, остальной экран заполнял
+     ЧИСТО ДЕКОРАТИВНЫЙ #backdrop — не окно игры, а подложка позади него.
+     Этот max-width:1250px висел тут с самого MVP (f1f7f5e), без привязки к
+     какому-либо реальному ограничению — просто исходная прикидка автора.
+     Убран: min(100%, 250dvh) выше уже сам по себе реализует «расти, пока
+     одна из сторон не упрётся в край вьюпорта» — по ширине упирается в
+     100% контейнера, по высоте — в 250dvh (тот же коэффициент 2.5, что и
+     aspect-ratio ниже), так что отдельный потолок в пикселях не защищал ни
+     от какого реального переполнения, только душил игру на больших экранах.
+     #backdrop остаётся — там, где соотношение сторон окна отличается от
+     2.5:1, он по-прежнему дорисовывает недостающую сторону (сверху/снизу
+     или по бокам), просто теперь эта полоса кратно уже, а не половина
+     экрана. См. также resizeCanvas() (game.js) — разрешение канваса
+     синхронизировано с реальным размером этого бокса, а не зашито в
+     фиксированные 1000×400 физических пикселей. */
   aspect-ratio: 1000 / 400;
   /* Стадия 2 (баг-репорт, тот же скриншот "часть экрана черная", что и
      видел основатель): непрозрачный #000 тут перекрывал #backdrop на ВСЕХ
@@ -116,7 +141,7 @@ html, body {
   #rotatePrompt {
     display: flex; height: 100%; flex-direction: column; align-items: center;
     justify-content: center; gap: 1em; text-align: center; padding: 2em;
-    background: #0a0a1e; color: #eef0ff;
+    background: #15100b; color: var(--paper);
   }
   #rotatePrompt .icon { font-size: 3em; }
 }
@@ -138,8 +163,8 @@ canvas#game {
   100% { transform: scale(1); opacity: 1; }
 }
 @keyframes glowPulse {
-  0%,100% { box-shadow: 0 0 22px 2px rgba(255,210,63,.55), 0 14px 34px rgba(0,0,0,.55); }
-  50% { box-shadow: 0 0 34px 8px rgba(255,210,63,.8), 0 14px 34px rgba(0,0,0,.55); }
+  0%,100% { box-shadow: 0 0 22px 2px rgba(255,215,122,.55), 0 14px 34px rgba(0,0,0,.55); }
+  50% { box-shadow: 0 0 34px 8px rgba(255,215,122,.8), 0 14px 34px rgba(0,0,0,.55); }
 }
 @keyframes alertShake {
   0%,100% { transform: translateX(0) rotate(0); }
@@ -163,10 +188,11 @@ canvas#game {
 .menu-btn, .tool-btn, .icon-btn, .si-buy {
   border-radius: var(--r-lg);
 }
-/* Глянцевая полоса сверху — характерный штрих мобильных гача-игр */
+/* Мягкий блик сверху — как отполированная бронза/лакированное дерево
+   (раунд 14: приглушён относительно «гача»-глянца раунда 4b). */
 .menu-btn::before, .si-buy::before {
   content: ''; position: absolute; left: 6%; right: 6%; top: 8%; height: 32%;
-  background: linear-gradient(rgba(255,255,255,.55), rgba(255,255,255,0));
+  background: linear-gradient(rgba(255,245,220,.42), rgba(255,245,220,0));
   border-radius: 999px; pointer-events: none;
 }
 /* Утро (баг-репорт основателя с телефона): :hover на боевых кнопках без
@@ -195,19 +221,19 @@ canvas#game {
   background: linear-gradient(var(--cta-1), var(--cta-2));
   color: #4a2c00;
   text-shadow: 0 1px 0 rgba(255,255,255,.4);
-  box-shadow: 0 6px 0 0 var(--cta-shadow), 0 10px 18px rgba(0,0,0,.45);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,.18), 0 6px 0 0 var(--cta-shadow), 0 10px 18px rgba(0,0,0,.45);
 }
-.menu-btn:active:not(:disabled) { box-shadow: 0 2px 0 0 var(--cta-shadow), 0 4px 8px rgba(0,0,0,.35); }
+.menu-btn:active:not(:disabled) { box-shadow: inset 0 -2px 0 rgba(0,0,0,.18), 0 2px 0 0 var(--cta-shadow), 0 4px 8px rgba(0,0,0,.35); }
 /* Утро (баг-репорт с телефона): "Играть" была МЕНЬШЕ тумблеров звука —
    иерархия читалась наоборот тому, что нужно. "Играть" — главное
    действие, крупнее всех остальных кнопок меню. */
 .menu-btn.primary-big { font-size: 1.55em; min-height: 60px; padding: .55em 2.4em; }
 .menu-btn.secondary {
-  background: linear-gradient(var(--secondary-1), var(--secondary-2));
-  color: #eef0ff; font-weight: 400; font-size: 1em; text-shadow: 0 1px 2px rgba(0,0,0,.4);
-  box-shadow: 0 6px 0 0 var(--secondary-shadow), 0 10px 18px rgba(0,0,0,.4);
+  background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2));
+  color: var(--paper); font-weight: 400; font-size: 1em; text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 6px 0 0 var(--secondary-shadow), 0 10px 18px rgba(0,0,0,.4);
 }
-.menu-btn.secondary:active:not(:disabled) { box-shadow: 0 2px 0 0 var(--secondary-shadow), 0 4px 8px rgba(0,0,0,.3); }
+.menu-btn.secondary:active:not(:disabled) { box-shadow: inset 0 1px 0 var(--edge-light), 0 2px 0 0 var(--secondary-shadow), 0 4px 8px rgba(0,0,0,.3); }
 
 /* ---------- HUD ---------- */
 #hud {
@@ -223,26 +249,30 @@ canvas#game {
 }
 .core-box {
   width: 30%; pointer-events: auto;
-  background: linear-gradient(var(--royal-2), var(--royal-3));
+  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3));
   border: 3px solid var(--ink); border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--edge-light), 0 4px 10px rgba(0,0,0,.35);
   padding: .4em .6em;
 }
 .core-enemy { text-align: right; }
 .core-label { font-size: .8em; opacity: .85; letter-spacing: .1em; font-weight: 600; }
-.bar { position: relative; height: 1.15em; background: #150f38; border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; }
+.bar { position: relative; height: 1.15em; background: #2a1c10; border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; }
 .bar-fill { position: absolute; top:0; left:0; bottom:0; width: 100%; transition: width .15s ease-out; }
-.bar-hp-player .bar-fill { background: linear-gradient(#7bfa8a,#1fa63e); left:0; }
-.bar-hp-enemy .bar-fill { background: linear-gradient(var(--alert-1), var(--alert-2)); right:0; left:auto; }
+.bar-hp-player .bar-fill { background: linear-gradient(#7bd98a,#2f8f45); left:0; }
+.bar-hp-enemy .bar-fill { background: linear-gradient(#ff7a5c,#b8321a); right:0; left:auto; }
 .core-enemy .bar-fill { left: auto; right: 0; }
 .bar-text { font-size: .85em; margin-top: .2em; opacity: .95; font-weight: 600; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
 .gold-row { margin-top: .35em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.7); border-radius: 8px; transition: background .2s ease; }
 /* Видимый сигнал штрафа за копление золота (ночная правка, находка
    ревьюера №1 — механика реальна, но раньше никак не показывалась). */
-@keyframes goldHoardPulse { 0%,100% { background: rgba(232,57,31,0); } 50% { background: rgba(232,57,31,.45); } }
+@keyframes goldHoardPulse { 0%,100% { background: rgba(200,64,30,0); } 50% { background: rgba(200,64,30,.45); } }
 .gold-row.gold-hoard-flash { animation: goldHoardPulse .35s ease-in-out 4; }
-.gold-dot { width:1em; height:1em; border-radius:50%; background: radial-gradient(#fff3c4,#ffb300); display:inline-block; border:2px solid var(--ink); }
+.gold-dot { width:1em; height:1em; border-radius:50%; background: radial-gradient(#fff3c4,#e0a030); display:inline-block; border:2px solid var(--ink); }
 /* Валюта «бриллиант» (раунд 5) — живой счётчик в HUD рядом с золотом. */
-.diamond-row { margin-top: .2em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: #8fd6ff; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+/* Раунд 14: валюта-«бриллиант» осознанно остаётся голубой (единственный
+   холодный акцент — читается как драгоценность на фоне дерева), обводка —
+   тёплая (--ink), не синяя. */
+.diamond-row { margin-top: .2em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: #9ad9f0; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
 .diamond-dot { width:.9em; height:.9em; background: linear-gradient(135deg,#d6f4ff,#3fa9e0); display:inline-block; border:2px solid var(--ink); transform: rotate(45deg); }
 .mission-title {
   flex: 1; text-align: center; font-family: 'Lilita One', sans-serif; font-size: 1.15em; letter-spacing: .04em;
@@ -250,15 +280,15 @@ canvas#game {
   text-shadow: 0 2px 2px rgba(0,0,0,.7);
 }
 .icon-btn {
-  pointer-events: auto; background: linear-gradient(var(--secondary-1), var(--secondary-2));
-  color: #eef0ff; min-width: 48px; min-height: 48px; width: 2.6em; height: 2.6em; font-size: 1em;
-  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+  pointer-events: auto; background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2));
+  color: var(--paper); min-width: 48px; min-height: 48px; width: 2.6em; height: 2.6em; font-size: 1em;
+  box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
 }
 .icon-btn:active { box-shadow: 0 2px 0 0 var(--secondary-shadow); }
 
 .first-hint {
   align-self: center; margin-bottom: .5em; pointer-events: none;
-  background: linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); color: var(--gold-text);
+  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); color: var(--gold-text);
   padding: .5em 1em; border-radius: var(--r-lg); font-size: .85em; text-align: center;
   font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.4);
   transition: opacity .6s ease; opacity: 1;
@@ -340,7 +370,8 @@ canvas#game {
    отдельной формуле, которая может незаметно разойтись с оригиналом. */
 .hero-mini {
   display:flex; flex-direction:column; align-items:center; gap:.25em; pointer-events:auto; margin-right:.6em;
-  background: linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); border-radius: var(--r-lg); padding: .3em .4em;
+  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); border-radius: var(--r-lg); padding: .3em .4em;
+  box-shadow: inset 0 1px 0 var(--edge-light), 0 4px 10px rgba(0,0,0,.35);
 }
 .hero-mini-icon {
   width:1.9em; height:1.9em; border-radius:50%; background: linear-gradient(var(--secondary-1), var(--secondary-2));
@@ -379,14 +410,14 @@ canvas#game {
    если взгляд игрока на другом конце арены — коробка выкупа теперь
    постоянно пульсирует, пока герой мёртв, не только при появлении. */
 @keyframes heroDownGlow {
-  0%,100% { box-shadow: 0 0 0 0 rgba(232,57,31,.6); }
-  50% { box-shadow: 0 0 16px 5px rgba(232,57,31,.75); }
+  0%,100% { box-shadow: 0 0 0 0 rgba(200,64,30,.6); }
+  50% { box-shadow: 0 0 16px 5px rgba(200,64,30,.75); }
 }
 /* Разовая вспышка на весь экран в момент смерти героя — сигнал заметен,
    даже если игрок смотрит в другой конец арены, не только мелкий текст HUD. */
 #heroDownFlash {
   position: absolute; inset: 0; pointer-events: none; z-index: 5;
-  background: radial-gradient(ellipse at center, rgba(232,57,31,0) 55%, rgba(232,57,31,.55) 100%);
+  background: radial-gradient(ellipse at center, rgba(200,64,30,0) 55%, rgba(200,64,30,.55) 100%);
   opacity: 0;
 }
 #heroDownFlash.flash { animation: heroDownFlashFade 1s ease-out; }
@@ -395,10 +426,10 @@ canvas#game {
 .tool-btn {
   position: relative; min-width: 48px; min-height: 48px; width: 3.6em; height: 3.8em;
   flex-shrink: 0; /* min-width уже держал пол, но явный флаг — тот же принцип защиты, что и на .toolbar/.hud-bottom-row выше */
-  background: linear-gradient(var(--secondary-1), var(--secondary-2)); color: #eef0ff;
+  background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2)); color: var(--paper);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   padding: .2em 0 .15em; font-size: 1em; overflow: hidden;
-  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+  box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
 }
 @media (hover: hover) and (pointer: fine) {
   .tool-btn:hover:not(.disabled) { border-color: var(--gold-text); }
@@ -412,7 +443,7 @@ canvas#game {
   position: absolute; top: 2px; left: 4px; font-size: .62em; opacity: .9; font-weight: 700;
   background: rgba(0,0,0,.45); border-radius: 4px; padding: 0 .25em; font-family: 'Fredoka', sans-serif;
 }
-.special-btn { background: linear-gradient(var(--royal-1), var(--royal-3)); border-color: var(--ink); }
+.special-btn { background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3)); border-color: var(--ink); }
 .cd-overlay {
   position: absolute; left: 0; right: 0; bottom: 0; height: 0%;
   background: rgba(0,0,0,.65); border-radius: 0 0 calc(var(--r-lg) - 3px) calc(var(--r-lg) - 3px); pointer-events: none;
@@ -452,19 +483,19 @@ canvas#game {
      центрирование. */
   overflow-y: auto;
 }
-.screen.overlay { background: rgba(4,4,14,.85); }
+.screen.overlay { background: rgba(12,8,4,.85); }
 /* Экран итога (раунд 5-6, повторная жалоба основателя): фон на самом деле
    уже анимируется (день/ночь, ветер, флаги, юниты) — просто 85%-затемнение
    паузы делало это незаметным глазу. Для итога держим фон заметно светлее,
    чтобы «живая» сцена позади карточки реально читалась. */
-#screenResult.overlay { background: rgba(4,4,14,.4); }
+#screenResult.overlay { background: rgba(12,8,4,.4); }
 
 /* Карточная панель — списки миссий/магазина */
 .panel-card {
   display: flex; flex-direction: column; align-items: center; gap: .7em;
-  background: linear-gradient(var(--royal-1), var(--royal-3));
-  border: 4px solid var(--ink); border-radius: var(--r-xl);
-  padding: 1.2em 1.4em; box-shadow: 0 12px 30px rgba(0,0,0,.5);
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3));
+  border: 4px solid var(--bronze-dark); border-radius: var(--r-xl);
+  padding: 1.2em 1.4em; box-shadow: inset 0 0 0 1px var(--edge-light), 0 12px 30px rgba(0,0,0,.5);
   max-width: 94vw; animation: popIn .18s ease-out;
   /* Утро (баг-репорт с телефона) — сама карточка тоже не имела потолка по
      высоте, только вложенные списки (.chapter-trail/.shop-list) скроллились
@@ -480,29 +511,32 @@ canvas#game {
 .panel-card::-webkit-scrollbar { width: 10px; }
 .panel-card::-webkit-scrollbar-track { background: rgba(0,0,0,.25); border-radius: 6px; }
 .panel-card::-webkit-scrollbar-thumb { background: linear-gradient(var(--cta-1), var(--cta-2)); border-radius: 6px; border: 2px solid var(--ink); }
+/* Раунд 14: заголовки панелей — кремовый текст с тёмной тенью, как
+   «ДВЕ КРЕПОСТИ» на обложке (жёлтая пилюля раунда 4b убрана; padding
+   сохранён — геометрия карточек не меняется). */
 .panel-card h2 {
   margin: 0 0 .1em; padding: .25em 1.1em; border-radius: 999px;
-  background: linear-gradient(var(--cta-1), var(--cta-2));
-  color: #4a2c00; text-shadow: 0 1px 0 rgba(255,255,255,.4);
-  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.25em;
-  box-shadow: 0 4px 0 0 var(--cta-shadow);
+  background: none;
+  color: var(--paper); text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
+  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.25em; letter-spacing: .06em;
+  box-shadow: none;
 }
 
 /* Всплывающие модалки (пауза, итог миссии) — упругий bounce при появлении */
 .popup-card {
   display: flex; flex-direction: column; align-items: center; gap: .7em;
-  background: linear-gradient(var(--royal-1), var(--royal-3));
-  border: 4px solid var(--ink); border-radius: var(--r-xl);
-  padding: 1.4em 1.8em; box-shadow: 0 14px 34px rgba(0,0,0,.55);
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3));
+  border: 4px solid var(--bronze-dark); border-radius: var(--r-xl);
+  padding: 1.4em 1.8em; box-shadow: inset 0 0 0 1px var(--edge-light), 0 14px 34px rgba(0,0,0,.55);
   max-width: 94vw; animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1);
   max-height: 94vh; max-height: 94dvh; overflow-y: auto;
 }
 .popup-card h2 {
   margin: 0 0 .1em; padding: .25em 1.2em; border-radius: 999px;
-  background: linear-gradient(var(--cta-1), var(--cta-2));
-  color: #4a2c00; text-shadow: 0 1px 0 rgba(255,255,255,.4);
-  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.35em;
-  box-shadow: 0 4px 0 0 var(--cta-shadow);
+  background: none;
+  color: var(--paper); text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
+  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.35em; letter-spacing: .06em;
+  box-shadow: none;
 }
 .popup-card p { max-width: 26em; opacity: .95; }
 /* Крупная выделенная награда на экране итога (утро 08.09.2026, баг-репорт
@@ -520,21 +554,21 @@ canvas#game {
 }
 .result-reward-value .diamond-dot { width: 1.1em; height: 1.1em; }
 .result-reward-value #resultRewardAmount::before { content: '+'; }
-/* Победа — золотое сияние; поражение — тревожный красно-оранжевый (по
-   палитре «Clash Royale»: тревожные элементы отдельным акцентным цветом) */
+/* Победа — золотое сияние; поражение — тревожный красно-оранжевый
+   (тревожные элементы — отдельным акцентным цветом палитры) */
 .popup-card.win { border-color: var(--gold-text); animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1), glowPulse 1.6s ease-in-out .45s infinite; }
-.popup-card.win h2 { background: linear-gradient(#fff3b0, var(--gold-text)); }
+.popup-card.win h2 { color: var(--gold-text); }
 .popup-card.lose {
   border-color: var(--alert-2);
-  background: linear-gradient(#3a1420, var(--royal-3));
+  background: var(--grain), linear-gradient(#3e1a12, var(--royal-3));
   animation: bounceIn .45s cubic-bezier(.34,1.56,.64,1), alertShake .5s ease .45s 1;
 }
-.popup-card.lose h2 { background: linear-gradient(var(--alert-1), var(--alert-2)); color: #3a0d02; }
+.popup-card.lose h2 { color: var(--alert-1); }
 
 #screenMenu h1 {
   font-family: 'Lilita One', sans-serif;
-  font-size: clamp(1.7em, 5.2vw, 3.2em); letter-spacing: .08em; margin: 0 0 .1em; color: var(--gold-text);
-  -webkit-text-stroke: 2px var(--ink);
+  font-size: clamp(1.7em, 5.2vw, 3.2em); letter-spacing: .08em; margin: 0 0 .1em; color: var(--paper);
+  -webkit-text-stroke: 1px var(--ink);
   text-shadow: 0 4px 0 var(--ink), 0 8px 16px rgba(0,0,0,.55);
 }
 .mission-list { display: flex; flex-direction: column; gap: .5em; max-height: 55vh; overflow-y: auto; width: min(90vw, 26em); }
@@ -599,13 +633,13 @@ canvas#game {
 .playlist-name { flex: 1; text-align: left; font-weight: 600; }
 .toggle-switch {
   width: 2.6em; height: 1.5em; border-radius: 999px; border: 2px solid var(--ink);
-  background: #3a3f66; position: relative; flex-shrink: 0; cursor: pointer; padding: 0;
+  background: #4a3a2c; position: relative; flex-shrink: 0; cursor: pointer; padding: 0;
 }
 .toggle-switch::after {
   content: ''; position: absolute; top: 1px; left: 1px; width: 1.1em; height: 1.1em;
-  border-radius: 50%; background: #cfd3ea; transition: transform .18s ease;
+  border-radius: 50%; background: #d8c8a8; transition: transform .18s ease;
 }
-.toggle-switch.on { background: linear-gradient(#7bfa8a, #1fa63e); }
+.toggle-switch.on { background: linear-gradient(#7bd98a, #2f8f45); }
 .toggle-switch.on::after { transform: translateX(1.1em); background: #fff; }
 .icon-btn.small { width: 2em; height: 2em; min-width: 36px; min-height: 36px; font-size: .8em; }
 #btnShuffle.active { outline: 3px solid var(--gold-text); }
@@ -613,7 +647,7 @@ canvas#game {
 /* Отсчёт 3…2…1 перед первым заходом новичка (раунд 5). */
 #countdownOverlay {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(4,4,14,.55); z-index: 6; pointer-events: none;
+  background: rgba(12,8,4,.55); z-index: 6; pointer-events: none;
 }
 #countdownNum {
   font-family: 'Lilita One', sans-serif; font-size: clamp(3em, 14vw, 7em); color: var(--gold-text);
@@ -624,7 +658,7 @@ canvas#game {
    новичку сразу после отсчёта (раунд 5) — плавно сходит на нет при первом
    действии игрока (см. dismissFirstMissionHint в game.js). */
 #hud.intro-enlarged::before {
-  content: ''; position: absolute; inset: 0; background: rgba(4,4,14,.5);
+  content: ''; position: absolute; inset: 0; background: rgba(12,8,4,.5);
   pointer-events: none; transition: opacity .6s ease;
 }
 #hud.intro-enlarged .hud-bottom-row {
@@ -691,9 +725,9 @@ canvas#game {
   display: flex; align-items: center; justify-content: space-between; gap: .6em;
   width: 100%; flex-shrink: 0;
   position: sticky; top: 0; z-index: 2;
-  background: linear-gradient(var(--royal-1), var(--royal-3));
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3));
   margin: 0 -1.4em 0; padding: 1.2em 1.4em .6em;
-  border-bottom: 2px solid rgba(255,255,255,.12);
+  border-bottom: 2px solid var(--edge-light);
   /* Скруглённые ВЕРХНИЕ углы ровно в радиус самой карточки — без этого в
      угловом зазоре на 1-2px просвечивал край прокручиваемого списка под
      прилипшей шапкой (видно на скриншоте живого теста). */
@@ -712,8 +746,8 @@ canvas#game {
 .shop-list {
   display: flex; flex-direction: column; gap: .5em;
   flex-shrink: 0;
-  width: min(94vw, 36em); padding: .6em; border: 2px solid rgba(255,255,255,.15);
-  border-radius: var(--r-lg); background: rgba(0,0,0,.15);
+  width: min(94vw, 36em); padding: .6em; border: 2px solid var(--edge-light);
+  border-radius: var(--r-lg); background: rgba(0,0,0,.18);
 }
 /* Заголовки групп (раунд 11, баг-репорт: однотипные покупки — башни,
    капканы и т.п. — стояли в разных углах списка) — визуально отделяют
@@ -722,7 +756,7 @@ canvas#game {
   flex-shrink: 0;
   margin: .5em 0 -.1em; padding: .15em .3em; font-family: 'Lilita One', sans-serif;
   font-size: .85em; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.6);
-  border-bottom: 2px solid rgba(255,255,255,.2);
+  border-bottom: 2px solid rgba(255,225,180,.22);
 }
 .shop-section-title:first-child { margin-top: 0; }
 /* Раунд 11 (баг-репорт: цена наезжала на длинное описание при переносе на
@@ -756,12 +790,12 @@ canvas#game {
 }
 .shop-item .si-buy:active:not(:disabled):not(.owned) { box-shadow: 0 1px 0 0 var(--cta-shadow); }
 .shop-item .si-buy:disabled {
-  background: linear-gradient(#6a6f9a, #3a3f66); color: #b7bce0; border-color: var(--ink);
-  box-shadow: 0 4px 0 0 #1c2160; cursor: not-allowed;
+  background: linear-gradient(#6a5a48, #3e3226); color: #b8a890; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #241a10; cursor: not-allowed;
 }
 .shop-item .si-buy.owned {
-  background: linear-gradient(#7bfa8a,#1fa63e); color: #0a2a0f; border-color: var(--ink);
-  box-shadow: 0 4px 0 0 #0e4a16; cursor: default;
+  background: linear-gradient(#7bd98a,#2f8f45); color: #0a2a0f; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #1c4a22; cursor: default;
 }
 .shop-note {
   flex-shrink: 0; margin: 0 0 .2em; padding: 0 .3em; font-size: .75em; opacity: .65; font-style: italic;
@@ -784,14 +818,14 @@ canvas#game {
    и награду текстом (требование площадок, не просто "x3"). */
 .ad-reward-row { display: flex; flex-direction: column; gap: .5em; margin: .2em 0; }
 .ad-reward-btn {
-  background: linear-gradient(#7bfae0, #1fa688); color: #04322a;
+  background: linear-gradient(#8fe6c0, #2a9a78); color: #04322a;
   box-shadow: 0 6px 0 0 #0e5c4a, 0 10px 18px rgba(0,0,0,.4);
   font-size: 1em;
 }
 .ad-reward-btn:active:not(:disabled) { box-shadow: 0 2px 0 0 #0e5c4a, 0 4px 8px rgba(0,0,0,.3); }
 .ad-reward-btn:disabled {
-  background: linear-gradient(#6a6f9a, #3a3f66); color: #b7bce0; border-color: var(--ink);
-  box-shadow: 0 4px 0 0 #1c2160; cursor: not-allowed;
+  background: linear-gradient(#6a5a48, #3e3226); color: #b8a890; border-color: var(--ink);
+  box-shadow: 0 4px 0 0 #241a10; cursor: not-allowed;
 }
 .ad-reward-amount { opacity: .85; font-size: .9em; }
 /* Утро 08.09.2026 (просьба основателя — «сделать слегка пульсирующей, как
@@ -811,11 +845,11 @@ canvas#game {
    — явно помечена как тест, чтобы никто не спутал с настоящим показом. */
 .ad-test-overlay {
   position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center;
-  background: rgba(5,5,20,.88);
+  background: rgba(12,8,4,.88);
 }
 .ad-test-box {
   max-width: 22em; text-align: center; padding: 1.4em 1.6em; border-radius: var(--r-xl);
-  background: linear-gradient(var(--royal-1), var(--royal-3)); border: 4px solid var(--ink);
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3)); border: 4px solid var(--bronze-dark);
   box-shadow: 0 12px 28px rgba(0,0,0,.5);
 }
 .ad-test-badge {
@@ -880,7 +914,7 @@ body.theme-blue-red {
 }
 #joyStick {
   position: absolute; left: 50%; top: 50%; width: 45%; height: 45%; border-radius: 50%;
-  background: rgba(255,232,115,.65); border: 2px solid var(--ink); transform: translate(-50%,-50%);
+  background: rgba(255,224,138,.65); border: 2px solid var(--ink); transform: translate(-50%,-50%);
 }
 /* Стадия 2 (баг-репорт, третье замечание про эту зону подряд): джойстик в
    самом левом нижнем углу стоял прямо на спрайте своей крепости/героя и
@@ -890,9 +924,9 @@ body.theme-blue-red {
 @media (pointer: coarse) {
   #joyBase {
     left: 9%; bottom: calc(3% + env(safe-area-inset-bottom, 0px));
-    background: rgba(255,255,255,.06); border-color: rgba(15,15,46,.55);
+    background: rgba(255,255,255,.06); border-color: rgba(26,18,10,.55);
   }
-  #joyStick { background: rgba(255,232,115,.4); border-color: rgba(15,15,46,.55); }
+  #joyStick { background: rgba(255,224,138,.4); border-color: rgba(26,18,10,.55); }
 }
 .touch-actions {
   position: absolute; right: 4%; bottom: calc(8% + env(safe-area-inset-bottom, 0px));
@@ -900,9 +934,9 @@ body.theme-blue-red {
 }
 .touch-btn {
   position: relative; min-width: 48px; min-height: 48px; width: 15vmin; height: 15vmin; max-width: 74px; max-height: 74px; border-radius: 50%;
-  background: linear-gradient(var(--secondary-1), var(--secondary-2)); color: var(--gold-text);
+  background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2)); color: var(--gold-text);
   font-size: 1.6em; touch-action: none; overflow: hidden;
-  box-shadow: 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+  box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
 }
 /* Кулдаун атаки/спец-удара/кирки — прямо на самих кнопках (раунд 5), не на
    перках нижней панели (та скрыта на мобильном, см. ниже). */

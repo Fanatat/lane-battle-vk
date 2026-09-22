@@ -45,6 +45,14 @@ const YANDEX_PRODUCT_IDS = {
   dlcPlayerBuff: 'dlc_player_buff',
 };
 
+// AES-ключ лидерборда CrazyGames (SDK.user.submitScore, методичка
+// МЕТОДИЧКА_ВЫВОД_НА_CRAZYGAMES.md §9) — заводится вместе с включением
+// лидерборда в Developer Portal, это действие основателя вне кода (см.
+// ТЗ_CRAZYGAMES_ИНТЕГРАЦИЯ.md, «Вход»). Пустая строка — явный, узнаваемый
+// плейсхолдер, не забытое пустое значение: submitScoreCrazyGames() ниже
+// проверяет его и громко предупреждает в консоль вместо тихого падения.
+const CRAZYGAMES_LEADERBOARD_KEY = ''; // TODO(основатель): вставить base64-ключ лидерборда из Developer Portal
+
 // Предохранитель на каждый вызов моста облачных сохранений (Яндекс
 // player.setData/getData, VK VKWebAppStorageSet/Get) — то же число, что
 // уже проверено в бою в vk_platform.js (см. ТЗ_ОБЛАЧНЫЕ_СОХРАНЕНИЯ.md,
@@ -63,6 +71,11 @@ const PLATFORM = (() => {
   let yandexPlayer = null;
   let yandexPlayerError = null;
   let vkBridge = null;
+  // "local" | "crazygames" | "disabled" — прямой флаг режима SDK (методичка
+  // §1), не наша эвристика. На "disabled" все вызовы SDK бросают исключение
+  // (чужой домен вне whitelist игры) — дальше SDK вообще не дёргается.
+  let crazygamesEnv = null;
+  let gameplayActive = false;
   let pauseHook = () => {};
   let resumeHook = () => {};
   let readyResolve;
@@ -144,6 +157,34 @@ const PLATFORM = (() => {
     kind = 'vk';
   }
 
+  // CrazyGames (методичка МЕТОДИЧКА_ВЫВОД_НА_CRAZYGAMES.md, §1-§2). В
+  // отличие от Yandex/VK, скрипт SDK не грузится отсюда через loadScript() —
+  // тег `<script src=".../crazygames-sdk-v3.js">` инжектится ТОЛЬКО в
+  // CrazyGames-сборку самим build_release.py (§12), до всех остальных
+  // <script> игры, поэтому к моменту выполнения этого файла window.CrazyGames
+  // уже должен существовать на этой сборке.
+  async function initCrazyGames() {
+    if (!window.CrazyGames || !window.CrazyGames.SDK) {
+      throw new Error('crazygames-sdk-not-present');
+    }
+    await window.CrazyGames.SDK.init();
+    kind = 'crazygames';
+    crazygamesEnv = window.CrazyGames.SDK.environment; // "local" | "crazygames" | "disabled"
+    if (crazygamesEnv === 'disabled') return; // §1/§12 — вне local/crazygames вызовы SDK бросают исключение, дальше не дёргаем
+    const sdkGame = window.CrazyGames.SDK.game;
+    sdkGame.loadingStart();
+    // muteAudio должен иметь приоритет над собственным тумблером звука игры
+    // (§2) — слушатель применяется сразу к текущему значению И на каждое
+    // изменение, SFX/MUSIC.setPlatformMuted() см. js/audio.js.
+    const applyMuteSetting = (settings) => {
+      const forced = !!(settings && settings.muteAudio);
+      SFX.setPlatformMuted(forced);
+      MUSIC.setPlatformMuted(forced);
+    };
+    sdkGame.addSettingsChangeListener(applyMuteSetting);
+    if (sdkGame.settings) applyMuteSetting(sdkGame.settings);
+  }
+
   // Локализация (Яндекс, п.2.14 — см. ТЗ_ЛОКАЛИЗАЦИЯ_11_ЯЗЫКОВ.md). Язык
   // определяется здесь, ПОСЛЕ того как kind/ysdk известны, и применяется
   // до readyResolve() — game.js ждёт PLATFORM.ready перед первым
@@ -182,6 +223,16 @@ const PLATFORM = (() => {
       // это не техническое упрощение, а прямое требование площадки по факту
       // решения основателя — см. КОНЦЕПТ_ГДД.md, «Допущения».
       I18N.setLang('ru');
+    } else if (kind === 'crazygames') {
+      // CrazyGames — фолбэк EN, НЕ RU (в отличие от ВК выше) — требование
+      // площадки (методичка §3, Gameplay Requirements/Basic Implementation)
+      // и решение основателя 17.09.2026 (см. КОНЦЕПТ_ГДД.md, «Допущения»).
+      // I18N.setLang() сама фолбэчится на 'en', если locale отсутствует или
+      // не входит в 11 языков (i18n.js, normalize()) — ручной разбор кода
+      // региона здесь не нужен, тот же путь, что уже работает для Яндекса.
+      const locale = (crazygamesEnv !== 'disabled' && window.CrazyGames && window.CrazyGames.SDK.user
+        && window.CrazyGames.SDK.user.systemInfo) ? window.CrazyGames.SDK.user.systemInfo.locale : null;
+      I18N.setLang(locale);
     } else {
       // Локальный тест ('none') — язык через Yandex SDK не определяется и
       // ВК-ограничение тоже не при чём (это просто удобство разработки):
@@ -212,6 +263,12 @@ const PLATFORM = (() => {
     if (kind === 'yandex' && ysdk && ysdk.features && ysdk.features.LoadingAPI) {
       loadingReadyCalled = true;
       ysdk.features.LoadingAPI.ready();
+    } else if (kind === 'crazygames' && crazygamesEnv !== 'disabled' && window.CrazyGames && window.CrazyGames.SDK.game) {
+      // Симметрично Яндексу выше — тот же принцип "не раньше реальной
+      // готовности первого экрана", тот же шрам (методичка §2, race condition
+      // в detect() у Яндекса — не наступать на него здесь).
+      loadingReadyCalled = true;
+      window.CrazyGames.SDK.game.loadingStop();
     }
   }
 
@@ -229,6 +286,12 @@ const PLATFORM = (() => {
         await initYandex();
       } else if (forced === 'vk' || (!forced && override === 'vk')) {
         await withTimeout(initVk(), 4000);
+      } else if (forced === 'crazygames' || (!forced && override === 'crazygames')) {
+        // Таймаут-страховка тем же числом, что у VK выше — на реальной
+        // CrazyGames-сборке SDK уже загружен синхронным тегом (см.
+        // initCrazyGames()), init() резолвится быстро; страховка на случай
+        // сетевого сбоя того же SDK-скрипта.
+        await withTimeout(initCrazyGames(), 4000);
       } else if (forced === 'none' || (!forced && override === 'none')) {
         kind = 'none';
       } else if (/yandex/i.test(document.referrer)) {
@@ -330,6 +393,30 @@ const PLATFORM = (() => {
         .catch(() => { resumeHook(); resolve(false); });
     });
   }
+  // По семантике совпадает с showYandexRewarded()/showVkRewarded() выше —
+  // та же кнопка "реклама"+награда, та же опциональность, пауза на весь
+  // запрос до adFinished ИЛИ adError (ТЗ_CRAZYGAMES_ИНТЕГРАЦИЯ.md, п.3).
+  // Midgame — НЕ реализуется (решение основателя, см. КОНЦЕПТ_ГДД.md).
+  function showCrazyGamesRewarded() {
+    return new Promise((resolve) => {
+      if (kind !== 'crazygames' || crazygamesEnv === 'disabled' || !window.CrazyGames.SDK.ad) { resolve(false); return; }
+      pauseHook();
+      window.CrazyGames.SDK.ad.requestAd('rewarded', {
+        adStarted: () => {},
+        adFinished: () => { resumeHook(); resolve(true); },
+        adError: (error) => {
+          // adsDisabledBasicLaunch — штатный случай на Basic Launch
+          // (методичка §4/§10, ГДД «Basic Launch первым шагом»), не баг —
+          // не шумим в консоль на него, в отличие от прочих кодов ошибки.
+          if (!error || error.code !== 'adsDisabledBasicLaunch') {
+            console.warn('[platform] CrazyGames rewarded ad error:', error && error.code);
+          }
+          resumeHook();
+          resolve(false);
+        },
+      });
+    });
+  }
 
   // Проактивная проверка готовности рекламы ДО клика (утро 08.09.2026,
   // прямое решение основателя по вопросу №3 — «давай сделаем заранее»):
@@ -420,6 +507,89 @@ const PLATFORM = (() => {
       .catch((e) => ({ ok: false, data: null, error: e }));
   }
 
+  // CrazyGames Data Module (методичка §7). В отличие от Yandex/VK выше — НЕ
+  // асинхронный мост с таймаутом, а синхронный API, буквально повторяющий
+  // localStorage (setItem/getItem/removeItem). Документация прямо
+  // предупреждает: игра не должна писать/читать window.localStorage
+  // напрямую на этой площадке, только через SDK.data.* — площадка сама
+  // решает физическое хранилище (гостевой localStorage или аккаунт).
+  function crazyGamesActive() {
+    return kind === 'crazygames' && crazygamesEnv !== 'disabled' && !!(window.CrazyGames && window.CrazyGames.SDK);
+  }
+  function crazyGamesDataAvailable() {
+    return crazyGamesActive() && !!window.CrazyGames.SDK.data;
+  }
+  // Публикуется отдельно от saveCloud/loadCloud (ниже) — js/save.js
+  // использует эти два метода напрямую вместо localStorage.getItem/setItem
+  // на ветке crazygames (см. ТЗ_CRAZYGAMES_ИНТЕГРАЦИЯ.md, п.4, «критично»).
+  function crazyGamesDataGet(key) {
+    if (!crazyGamesDataAvailable()) return null;
+    try { return window.CrazyGames.SDK.data.getItem(key); }
+    catch (e) { console.warn('[platform] CrazyGames data.getItem failed:', e); return null; }
+  }
+  function crazyGamesDataSet(key, value) {
+    if (!crazyGamesDataAvailable()) return;
+    try { window.CrazyGames.SDK.data.setItem(key, value); }
+    catch (e) { console.warn('[platform] CrazyGames data.setItem failed:', e); }
+  }
+  function saveCloudCrazyGames(fullState) {
+    if (!crazyGamesDataAvailable()) return Promise.resolve({ ok: false, error: new Error('no-sdk') });
+    try {
+      window.CrazyGames.SDK.data.setItem(SAVE_KEY, JSON.stringify(fullState));
+      return Promise.resolve({ ok: true, error: null });
+    } catch (e) {
+      return Promise.resolve({ ok: false, error: e });
+    }
+  }
+  function loadCloudCrazyGames() {
+    if (!crazyGamesDataAvailable()) return Promise.resolve({ ok: false, data: null, error: new Error('no-sdk') });
+    try {
+      const raw = window.CrazyGames.SDK.data.getItem(SAVE_KEY);
+      return Promise.resolve({ ok: true, data: raw ? JSON.parse(raw) : null, error: null });
+    } catch (e) {
+      return Promise.resolve({ ok: false, data: null, error: e });
+    }
+  }
+
+  // ---- лидерборд CrazyGames (методичка §9, клиентский путь Leaderboards
+  // SDK — единственный доступный без бэкенда). Сервер требует AES-GCM
+  // шифрование очка перед отправкой — код encryptScoreCrazyGames() ниже
+  // взят дословно из примера в документации CrazyGames
+  // (docs.crazygames.com/sdk/leaderboards-client/), не придуман заново.
+  async function encryptScoreCrazyGames(score) {
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const algorithm = { name: 'AES-GCM', iv };
+    const keyBytes = new Uint8Array(
+      atob(CRAZYGAMES_LEADERBOARD_KEY).split('').map((c) => c.charCodeAt(0))
+    );
+    const cryptoKey = await window.crypto.subtle.importKey('raw', keyBytes, algorithm, false, ['encrypt']);
+    const dataBuffer = new TextEncoder().encode(score.toString());
+    const encryptedBuffer = await window.crypto.subtle.encrypt(algorithm, cryptoKey, dataBuffer);
+    const combined = new Uint8Array(iv.length + encryptedBuffer.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encryptedBuffer), iv.length);
+    return btoa(String.fromCharCode(...combined));
+  }
+  async function submitScoreCrazyGames(score) {
+    if (!crazyGamesActive() || !window.CrazyGames.SDK.user) {
+      return { ok: false, reason: 'no-sdk' };
+    }
+    if (!CRAZYGAMES_LEADERBOARD_KEY) {
+      // Ключ ещё не заведён основателем в Developer Portal (см. константу
+      // выше) — громкое предупреждение вместо тихого падения/пустого вызова.
+      console.warn('[platform] CRAZYGAMES_LEADERBOARD_KEY не задан — submitScore пропущен.');
+      return { ok: false, reason: 'no-key' };
+    }
+    try {
+      const encryptedScore = await encryptScoreCrazyGames(score);
+      window.CrazyGames.SDK.user.submitScore({ score, encryptedScore });
+      return { ok: true };
+    } catch (e) {
+      console.error('[platform] CrazyGames submitScore failed:', e);
+      return { ok: false, reason: 'error', error: e };
+    }
+  }
+
   return {
     ready,
     // Готовность платежей/каталога/плеера — отдельно от `ready` (см.
@@ -432,26 +602,54 @@ const PLATFORM = (() => {
     saveCloud(fullState) {
       if (kind === 'yandex') return saveCloudYandex(fullState);
       if (kind === 'vk') return saveCloudVk(fullState);
+      if (kind === 'crazygames') return saveCloudCrazyGames(fullState);
       return Promise.resolve({ ok: true, error: null });
     },
     loadCloud() {
       if (kind === 'yandex') return loadCloudYandex();
       if (kind === 'vk') return loadCloudVk();
+      if (kind === 'crazygames') return loadCloudCrazyGames();
       return Promise.resolve({ ok: true, data: null, error: null });
     },
+    // js/save.js использует эти два метода напрямую вместо localStorage.*
+    // на ветке crazygames (см. ТЗ_CRAZYGAMES_ИНТЕГРАЦИЯ.md, п.4) — на других
+    // площадках crazyGamesDataAvailable() внутри всегда false, вызовы no-op.
+    crazyGamesDataGet,
+    crazyGamesDataSet,
     setPauseHooks(pause, resume) { pauseHook = pause; resumeHook = resume; },
+    // Вызывается из game.js, showScreen() — гейминг-lifecycle CrazyGames
+    // (методичка §2) шире прежних pauseHook/resumeHook (те — только вокруг
+    // рекламы): активный геймплей — это экран 'match', всё остальное (меню,
+    // пауза, итог, магазин) — не активный геймплей. На остальных площадках
+    // no-op (см. проверку kind внутри).
+    setGameplayActive(active) {
+      if (kind !== 'crazygames' || crazygamesEnv === 'disabled') return;
+      if (active === gameplayActive) return;
+      gameplayActive = active;
+      if (!window.CrazyGames || !window.CrazyGames.SDK.game) return;
+      if (active) window.CrazyGames.SDK.game.gameplayStart();
+      else window.CrazyGames.SDK.game.gameplayStop();
+    },
     showRewardedVideo() {
       if (kind === 'yandex') return showYandexRewarded();
       if (kind === 'vk') return showVkRewarded();
+      if (kind === 'crazygames') return showCrazyGamesRewarded();
       return showTestAd();
     },
     // true/false — площадка умеет проверять заранее, результат достоверен;
-    // null — площадка (Yandex) такой проверки не даёт, вызывающий код
-    // должен вести себя как раньше (не гейтить кнопку проверкой).
+    // null — площадка (Yandex/CrazyGames) такой проверки не даёт, вызывающий
+    // код должен вести себя как раньше (не гейтить кнопку проверкой).
     checkRewardedAvailable() {
       if (kind === 'vk') return checkVkRewardedAvailable();
-      if (kind === 'yandex') return Promise.resolve(null);
+      if (kind === 'yandex' || kind === 'crazygames') return Promise.resolve(null);
       return Promise.resolve(true); // локальный тест — заглушка всегда «готова»
+    },
+    // Лидерборд (только CrazyGames — см. методичку §9, ГДД «Допущения»).
+    // Что именно передаётся как `score` — решает вызывающий код (game.js),
+    // этот слой только шифрует и отправляет.
+    submitScore(score) {
+      if (kind === 'crazygames') return submitScoreCrazyGames(score);
+      return Promise.resolve({ ok: false, reason: 'not-supported' });
     },
     purchaseYandexProduct,
     getYandexProductPrice(key) {

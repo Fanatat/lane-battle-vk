@@ -5,6 +5,11 @@ const SFX = (() => {
   let ctx = null;
   let master = null;
   let muted = false;
+  // Приоритет площадки (CrazyGames SDK.game.settings.muteAudio, см.
+  // js/platform.js, initCrazyGames()) над собственным тумблером звука игры
+  // — независимый флаг, не пишется в progress/save.js (эфемерное состояние
+  // площадки, не выбор игрока).
+  let platformMuted = false;
 
   function ensure() {
     if (!ctx) {
@@ -27,7 +32,7 @@ const SFX = (() => {
   }
 
   function tone({ freq = 440, freq2 = null, dur = 0.15, type = 'sine', peak = 0.5, delay = 0 }) {
-    if (muted) return;
+    if (muted || platformMuted) return;
     const c = ensure();
     const t0 = c.currentTime + delay;
     const osc = c.createOscillator();
@@ -42,7 +47,7 @@ const SFX = (() => {
   }
 
   function noiseBurst({ dur = 0.12, peak = 0.4, filterFreq = 1200, delay = 0 }) {
-    if (muted) return;
+    if (muted || platformMuted) return;
     const c = ensure();
     const t0 = c.currentTime + delay;
     const bufferSize = Math.floor(c.sampleRate * dur);
@@ -64,6 +69,10 @@ const SFX = (() => {
   return {
     setMuted(v) { muted = v; },
     isMuted() { return muted; },
+    // Площадка (CrazyGames muteAudio) — приоритет над muted выше, но не
+    // подменяет/не сбрасывает его: оба флага независимы, звук глушится, если
+    // сработал хотя бы один (см. tone()/noiseBurst()).
+    setPlatformMuted(v) { platformMuted = v; },
     unlock() { ensure(); },
     // Скрытая/неактивная вкладка (модерация, п.1.3 — см. document.
     // visibilitychange в game.js) — тем же способом, что MUSIC.pauseForAd:
@@ -125,6 +134,9 @@ const MUSIC = (() => {
   let ctx = null;
   let masterGain = null; // мьют + громкость от числа юнитов (effectiveVolume)
   let musicMuted = false;
+  // Приоритет площадки (CrazyGames SDK.game.settings.muteAudio) — тот же
+  // принцип, что и platformMuted у SFX выше, независимый от musicMuted.
+  let platformMuted = false;
   let baseVolume = 0.7;
   let unitVolumeMult = 1; // множитель от числа юнитов на поле (см. setUnitCount)
   let current = null; // { trackId, buffer, source, gain, startedAt, offset, pausedOffset, adPaused, fading, manualStop, ended }
@@ -161,7 +173,7 @@ const MUSIC = (() => {
     return MUSIC_TRACKS[trackId] || EVENT_TRACKS[trackId];
   }
   function effectiveVolume() {
-    return musicMuted ? 0 : baseVolume * unitVolumeMult;
+    return (musicMuted || platformMuted) ? 0 : baseVolume * unitVolumeMult;
   }
   function loadBuffer(file) {
     if (!bufferCache.has(file)) {
@@ -219,6 +231,10 @@ const MUSIC = (() => {
       if (masterGain) fadeGain(masterGain, effectiveVolume(), 0.3);
     },
     isMusicMuted() { return musicMuted; },
+    setPlatformMuted(v) {
+      platformMuted = v;
+      if (masterGain) fadeGain(masterGain, effectiveVolume(), 0.3);
+    },
     // Динамическая громкость от количества живых юнитов на поле (раунд 10,
     // MUSIC_MIX.unitsForMaxVolume/volumeBoostAtMaxUnits) — не режет резко,
     // применяется тем же fadeGain с коротким временем сглаживания.

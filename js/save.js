@@ -42,9 +42,26 @@ function defaultProgress() {
   };
 }
 
+// CrazyGames Data Module (методичка §7): документация прямо предупреждает —
+// не читать/писать window.localStorage напрямую на этой площадке, только
+// через PLATFORM.crazyGamesDataGet/Set (SDK.data.getItem/setItem). На
+// остальных площадках (yandex/vk/none) — обычный localStorage, как раньше.
+// PLATFORM.kind() ещё 'none' в самый первый синхронный момент загрузки
+// скрипта (detect() асинхронный) — на этом коротком окне localGet()
+// вернёт null вместо реальных данных СrazyGames-игрока; не проблема, эта
+// ранняя провизорная загрузка всё равно перезаписывается позже реальным
+// syncProgress() (см. game.js, вызывается после PLATFORM.ready).
+function localGet() {
+  return PLATFORM.kind() === 'crazygames' ? PLATFORM.crazyGamesDataGet(SAVE_KEY) : localStorage.getItem(SAVE_KEY);
+}
+function localSet(json) {
+  if (PLATFORM.kind() === 'crazygames') { PLATFORM.crazyGamesDataSet(SAVE_KEY, json); return; }
+  localStorage.setItem(SAVE_KEY, json);
+}
+
 function loadProgress() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localGet();
     const d = defaultProgress();
     if (!raw) return d;
     const parsed = JSON.parse(raw);
@@ -80,8 +97,8 @@ function flushCloudPush(progress) {
 
 function saveProgress(progress) {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(progress));
-  } catch (e) { /* localStorage недоступен — прогресс просто не сохранится */ }
+    localSet(JSON.stringify(progress));
+  } catch (e) { /* хранилище недоступно — прогресс просто не сохранится */ }
   scheduleCloudPush(progress);
 }
 
@@ -90,7 +107,7 @@ function saveProgress(progress) {
 
 function readLocalRaw() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localGet();
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     return null;
@@ -98,7 +115,7 @@ function readLocalRaw() {
 }
 
 function writeLocalRaw(data) {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* недоступно — переживём */ }
+  try { localSet(JSON.stringify(data)); } catch (e) { /* недоступно — переживём */ }
 }
 
 // Конфликт (оба поля непустые и различаются) решается по типу: числа —

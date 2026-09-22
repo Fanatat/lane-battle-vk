@@ -26,37 +26,65 @@ const CORE_KEEP_NEAR = 12; // ближний к core.x край донжона
 const CORE_KEEP_FAR = 42;  // дальний (к линии боя) край донжона
 
 // Эпохи: меняют только силуэт оружия и палитру фона, не баланс боя.
+// Раунд 14 (визуал «под обложку», см. ТЗ_ВИЗУАЛ_ПОД_ОБЛОЖКУ.md) — палитра
+// расширена под «силуэтный закат» обложки: небо в три ступени + ореол
+// солнца, три слоя гор, земля в три тона + светлая тропа, дерево/камень
+// построек. Старые поля sky/hills/hills2/coreBody/coreDark убраны — их
+// читали только tools/promo_*.html (не в сборке, см. ТЗ «Известные
+// ограничения»); coreAccent остался (бронзовые обручи частокола).
 const AGES = {
   stone: {
     id: 'stone',
     get name() { return I18N.t('age.stone'); },
-    sky: ['#3a2f28', '#6b4f3a'],
-    hills: '#4d3a2a',
-    hills2: '#6b5138',
-    ground: '#8a6a45',
+    skyTop: '#2a1610', skyMid: '#6b3a22', skyHorizon: '#c97a3e', sunGlow: '#f2b46a',
+    mountains: ['#6a4630', '#4a2e1e', '#30190f'],
+    haze: 'rgba(230,150,80,.25)',
+    groundTop: '#8c6438', ground: '#6b4a2c', groundDark: '#4a3220', pathLight: '#a37a48',
+    woodLight: '#7a5230', woodDark: '#4a2f1a', stone: '#5a4432',
     weapon: { melee: 'club', spear: 'stick_spear', ranged: 'sling', heavy: 'stone_hammer' },
-    coreBody: '#8a6a45', coreDark: '#5c4630', coreAccent: '#c9a35a', flame: '#ffb04c',
+    coreAccent: '#c9a35a', flame: '#ffb04c',
   },
   bronze: {
     id: 'bronze',
     get name() { return I18N.t('age.bronze'); },
-    sky: ['#2c3a33', '#4d6b58'],
-    hills: '#2f4a3a',
-    hills2: '#3f6048',
-    ground: '#5c7a58',
+    skyTop: '#1c2622', skyMid: '#4a5a3e', skyHorizon: '#b89a58', sunGlow: '#e8c878',
+    mountains: ['#5c6a4a', '#3c4a32', '#26301f'],
+    haze: 'rgba(200,190,120,.22)',
+    groundTop: '#6e7a48', ground: '#56603a', groundDark: '#3a4028', pathLight: '#8a8a52',
+    woodLight: '#6e5233', woodDark: '#3f2d1b', stone: '#56584a',
     weapon: { melee: 'sword', spear: 'bronze_spear', ranged: 'bow', heavy: 'axe' },
-    coreBody: '#6b6250', coreDark: '#443e32', coreAccent: '#cd8a3c', flame: '#ffb04c',
+    coreAccent: '#cd8a3c', flame: '#ffb04c',
   },
   iron: {
     id: 'iron',
     get name() { return I18N.t('age.iron'); },
-    sky: ['#2a2c33', '#4a4d5c'],
-    hills: '#33363f',
-    hills2: '#454955',
-    ground: '#5a5d68',
+    skyTop: '#1a1c22', skyMid: '#4a4e5a', skyHorizon: '#9a8e84', sunGlow: '#d8c8b0',
+    mountains: ['#5c5e68', '#3e4048', '#26282e'],
+    haze: 'rgba(180,180,190,.25)',
+    groundTop: '#6a6a70', ground: '#4e4e56', groundDark: '#34343a', pathLight: '#7e7a78',
+    woodLight: '#5a4a3c', woodDark: '#33291f', stone: '#4a4c54',
     weapon: { melee: 'bayonet', spear: 'pike', ranged: 'rifle', heavy: 'cannonarm' },
-    coreBody: '#565b66', coreDark: '#33363d', coreAccent: '#9aa4b0', flame: '#bfe6ff',
+    coreAccent: '#9aa4b0', flame: '#bfe6ff',
   },
+};
+
+// Арт-спецификация «под обложку» (раунд 14, ТЗ_ВИЗУАЛ_ПОД_ОБЛОЖКУ.md):
+// единый источник цветов/толщин для рига, VFX и построек. Решения
+// основателя 2026-09-19: свои — светлые, враги — чёрные силуэты, фигуры
+// ~1.5x. Литералы по коду не дублировать — менять здесь.
+const ART = {
+  rigScale: 1.5,
+  player: { fill: '#f3e7c8', outline: '#2a1a0e' },
+  hero: { fill: '#f7ecc9', outline: '#4a2e0f', gold: '#f6c94a', goldGlow: 'rgba(246,201,74,.35)', goldHi: '#fff3c4' },
+  enemy: { fill: '#16120e', outline: '#6a4a2a', eliteOutline: '#c8301e', eliteGlow: 'rgba(200,48,30,.35)' },
+  shadow: 'rgba(0,0,0,.28)',
+  slash: { hero: 'rgba(246,201,74,.55)', player: 'rgba(255,240,210,.45)', enemy: 'rgba(40,25,15,.55)', enemyRim: 'rgba(200,140,80,.5)' },
+  spark: ['#ffd77a', '#ffb04c', '#ff8a3c'],
+  dust: 'rgba(214,170,120,.35)',
+  woodChip: '#4a2f1a',
+  cryAura: 'rgba(255,138,60,.45)',
+  flags: { player: '#5fb35a', enemy: '#c8301e', gold: '#f2c94c' },
+  particleCap: 400,
 };
 
 // Роли юнитов (общий баланс на все эпохи — эпоха меняет только рисунок).

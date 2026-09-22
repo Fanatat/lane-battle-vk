@@ -231,11 +231,27 @@ let match = null; // состояние текущего матча
 let lastResult = null; // 'win' | 'lose'
 
 // ---------------------------------------------------------------- canvas
+// Баг-репорт основателя 2026-09-21 (пустые поля по краям на широких
+// мониторах): раньше здесь всегда выделялось РОВНО ARENA.width×ARENA.height
+// (1000×400) физических пикселей × dpr — независимо от того, каким
+// реально нарисовался #arenaWrap (CSS сам растягивал канвас на всю его
+// ширину/высоту через width:100%/height:100%, см. style.css). Пока
+// #arenaWrap был зажат в max-width:1250px, разница была не так заметна;
+// без этого потолка на большом экране растяжение фиксированного 1000×400
+// битмапа до, например, 1900×760 CSS px дало бы явную замыленную картинку.
+// Берём реальный отрендеренный размер бокса (getBoundingClientRect) и
+// считаем разрешение канваса от него — тот же приём, что уже работает для
+// #backdrop чуть ниже (resizeBackdrop). Игровая логика (entities.js/ai.js и
+// т.д.) по-прежнему всегда работает в логических единицах ARENA (0..1000 ×
+// 0..400) — трогаем только матрицу трансформации контекста, ни одну
+// координату в остальном коде менять не нужно.
 function resizeCanvas() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = ARENA.width * dpr;
-  canvas.height = ARENA.height * dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const rect = canvas.getBoundingClientRect();
+  const w = rect.width || ARENA.width, h = rect.height || ARENA.height;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  ctx.setTransform((w * dpr) / ARENA.width, 0, 0, (h * dpr) / ARENA.height, 0, 0);
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -249,39 +265,188 @@ resizeCanvas();
 const backdrop = document.getElementById('backdrop');
 const bctx = backdrop.getContext('2d');
 function currentBackdropAge() { return (match && match.age) ? match.age : AGES.stone; }
+
+// ---------------------------------------------------------------- фон «под обложку» (раунд 14)
+// Всё статичное (небо, горы, дымка, земля с тропой и крапом, камни, трава)
+// запекается в offscreen-canvas: арена — один раз на миссию (match.bg),
+// #backdrop — при смене размера/эпохи. В кадре только drawImage + солнце/
+// луна, облака и пылевые мошки поверх. Профиль рельефа — детерминированный
+// псевдослучай по эпохе: горы одной эпохи всегда одинаковы (не «прыгают»
+// между кадрами и матчами), арена и подложка строятся из одного профиля.
+// ctx.shadowBlur не используется нигде — свечение только градиентами
+// (см. ТЗ_ВИЗУАЛ_ПОД_ОБЛОЖКУ.md, «Технические правила»).
+function seededRandom(seed) {
+  let s = (seed * 2654435761) >>> 0 || 1;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+const AGE_SEED = { stone: 7, bronze: 19, iron: 31 };
+function hexAlpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = s => Math.round(((pa >> s) & 255) * (1 - t) + ((pb >> s) & 255) * t);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+const terrainCache = {};
+function terrainFor(age) {
+  if (terrainCache[age.id]) return terrainCache[age.id];
+  const rng = seededRandom(AGE_SEED[age.id] || 3);
+  // Гребень: несколько пиков случайной высоты/ширины поверх низкой базы
+  // плюс мелкая рваность; smooth — покатые холмы, иначе — острые пики.
+  function ridge(n, peaks, jag, smooth) {
+    const pk = [];
+    for (let i = 0; i < peaks; i++) pk.push({ x: rng(), h: 0.4 + rng() * 0.6, w: 0.07 + rng() * 0.17 });
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const x = i / n;
+      let y = 0.1;
+      for (const p of pk) {
+        const d = Math.abs(x - p.x) / p.w;
+        if (d < 1) y = Math.max(y, p.h * (smooth ? 1 - d * d : 1 - d));
+      }
+      y += (rng() - 0.5) * jag;
+      pts.push({ x, y: Math.max(0.03, Math.min(1, y)) });
+    }
+    return pts;
+  }
+  const t = {
+    far: ridge(60, 7, 0.05, false),
+    mid: ridge(44, 5, 0.03, true),
+    near: ridge(70, 10, 0.12, false),
+    rocks: Array.from({ length: 22 }, () => ({ x: rng(), y: rng(), r: 1.6 + rng() * 3, tone: rng() })),
+    tufts: Array.from({ length: 36 }, () => ({ x: rng(), y: rng(), h: 3 + rng() * 5, lean: (rng() - 0.5) * 1.4 })),
+    stipple: Array.from({ length: 480 }, () => ({ x: rng(), y: rng(), a: rng() })),
+    pathEdge: Array.from({ length: 56 }, () => rng()),
+    motes: Array.from({ length: 14 }, () => ({ x0: rng(), y0: rng(), sp: 0.012 + rng() * 0.02, f: 0.5 + rng() * 0.9, p: rng() * 6.28, r: 0.8 + rng() * 1.3 })),
+  };
+  terrainCache[age.id] = t;
+  return t;
+}
+function makeLayerCanvas(w, h, dpr) {
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(w * dpr); c.height = Math.ceil(h * dpr);
+  const x = c.getContext('2d');
+  x.scale(dpr, dpr);
+  return [c, x];
+}
+// Небо: три ступени градиента + тёплый ореол вдоль горизонта (самый светлый
+// в центре, как закат на обложке). Солнце/луна и облака рисуются поверх в
+// кадре, а горы — поверх них (bakeLand), поэтому небо — отдельный слой.
+function bakeSky(age, w, h, groundY, dpr) {
+  const [c, x] = makeLayerCanvas(w, h, dpr);
+  const g = x.createLinearGradient(0, 0, 0, groundY);
+  g.addColorStop(0, age.skyTop); g.addColorStop(0.55, age.skyMid); g.addColorStop(1, age.skyHorizon);
+  x.fillStyle = g; x.fillRect(0, 0, w, h);
+  const glow = x.createRadialGradient(w * 0.5, groundY - 6, 0, w * 0.5, groundY - 6, w * 0.6);
+  glow.addColorStop(0, hexAlpha(age.sunGlow, 0.55));
+  glow.addColorStop(0.4, hexAlpha(age.sunGlow, 0.2));
+  glow.addColorStop(1, hexAlpha(age.sunGlow, 0));
+  x.fillStyle = glow; x.fillRect(0, 0, w, groundY);
+  return c;
+}
+// Горы (три слоя с атмосферной перспективой и дымкой между ними), земля со
+// светлой тропой вдоль линии боя, крап, камни и трава/щебень. detail<1 —
+// для подложки: часть крапа/травы пропускается, там и так мелко.
+function bakeLand(age, w, h, groundY, dpr, detail = 1) {
+  const [c, x] = makeLayerCanvas(w, h, dpr);
+  const t = terrainFor(age);
+  const skyH = groundY;
+  function layer(pts, amp, base, color) {
+    x.fillStyle = color;
+    x.beginPath(); x.moveTo(-2, groundY + 2);
+    for (const p of pts) x.lineTo(p.x * w, groundY - base - p.y * amp);
+    x.lineTo(w + 2, groundY + 2); x.closePath(); x.fill();
+  }
+  function hazeBand(top, bottom, alphaMul) {
+    const hz = x.createLinearGradient(0, top, 0, bottom);
+    const a = parseFloat(age.haze.match(/[\d.]+\)$/)[0]) * alphaMul;
+    const base = age.haze.replace(/[\d.]+\)$/, '');
+    hz.addColorStop(0, base + '0)'); hz.addColorStop(0.75, base + a + ')'); hz.addColorStop(1, base + (a * 0.6) + ')');
+    x.fillStyle = hz; x.fillRect(0, top, w, bottom - top);
+  }
+  layer(t.far, skyH * 0.42, 8, mixHex(age.mountains[0], age.skyHorizon, 0.34));
+  hazeBand(groundY - skyH * 0.34, groundY, 1.3);
+  layer(t.mid, skyH * 0.22, 3, mixHex(age.mountains[1], age.skyHorizon, 0.08));
+  hazeBand(groundY - skyH * 0.16, groundY, 0.7);
+  layer(t.near, skyH * 0.1, 0, age.mountains[2]);
+  // земля: сверху светлее, к низу темнее
+  const gg = x.createLinearGradient(0, groundY, 0, h);
+  gg.addColorStop(0, age.groundTop); gg.addColorStop(0.3, age.ground); gg.addColorStop(1, age.groundDark);
+  x.fillStyle = gg; x.fillRect(0, groundY, w, h - groundY);
+  // светлая тропа вдоль линии боя с рваной нижней кромкой
+  const n = t.pathEdge.length - 1;
+  x.fillStyle = age.pathLight;
+  x.beginPath(); x.moveTo(0, groundY);
+  for (let i = 0; i <= n; i++) x.lineTo(i / n * w, groundY + 5 + t.pathEdge[i] * 5);
+  x.lineTo(w, groundY); x.closePath(); x.fill();
+  x.fillStyle = 'rgba(0,0,0,.28)'; x.fillRect(0, groundY - 0.5, w, 1.5);
+  // крап
+  for (const s of t.stipple) {
+    if (s.a > detail) continue;
+    x.fillStyle = s.a > 0.5 ? 'rgba(255,235,200,.07)' : 'rgba(0,0,0,.12)';
+    x.fillRect(s.x * w, groundY + 9 + s.y * (h - groundY - 9), 1 + s.a, 1);
+  }
+  // камни
+  for (const r of t.rocks) {
+    const px = r.x * w, py = groundY + 8 + r.y * (h - groundY - 14);
+    x.fillStyle = mixHex(age.stone, age.groundDark, r.tone * 0.6);
+    x.beginPath(); x.ellipse(px, py, r.r * 1.4, r.r * 0.8, 0, 0, Math.PI * 2); x.fill();
+    x.fillStyle = 'rgba(255,240,210,.16)';
+    x.beginPath(); x.ellipse(px - r.r * 0.4, py - r.r * 0.3, r.r * 0.6, r.r * 0.28, 0, 0, Math.PI * 2); x.fill();
+  }
+  // трава (stone/bronze) или щебень (iron)
+  x.lineCap = 'round'; x.lineWidth = 1.2;
+  x.strokeStyle = mixHex(age.groundTop, age.pathLight, 0.6);
+  for (const g2 of t.tufts) {
+    if (g2.h / 8 > detail) continue;
+    const px = g2.x * w, py = groundY + 6 + g2.y * (h - groundY - 12);
+    if (age.id === 'iron') { x.fillStyle = 'rgba(0,0,0,.25)'; x.fillRect(px, py, 2 + g2.h * 0.4, 1.5); continue; }
+    for (let k = -1; k <= 1; k++) { x.beginPath(); x.moveTo(px, py); x.lineTo(px + k * 2 + g2.lean * g2.h, py - g2.h + Math.abs(k)); x.stroke(); }
+  }
+  return c;
+}
+// Арена: запекается с запасом BG_PAD по краям под тряску экрана (до ±6px).
+const BG_PAD = 10;
+function bakeArenaBackground(age) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = ARENA.width + BG_PAD * 2, h = ARENA.height + BG_PAD * 2, gy = ARENA.groundY + BG_PAD;
+  return { ageId: age.id, sky: bakeSky(age, w, h, gy, dpr), land: bakeLand(age, w, h, gy, dpr, 1) };
+}
+// Пылевые мошки — тёплые точки над тропой, дрейф по ветру; без состояния,
+// позиция считается от времени (update() не трогается).
+function drawMotes(age, t) {
+  ctx.fillStyle = hexAlpha(age.sunGlow, 0.4);
+  for (const k of terrainFor(age).motes) {
+    const x = ((k.x0 + t * k.sp) % 1) * ARENA.width;
+    const y = ARENA.groundY - 16 - k.y0 * 120 + Math.sin(t * k.f + k.p) * 9;
+    ctx.beginPath(); ctx.arc(x, y, k.r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+let backdropCache = null;
 function drawBackdrop() {
   const w = backdrop.clientWidth, h = backdrop.clientHeight;
   if (!w || !h) return;
   const age = currentBackdropAge();
   const dn = match ? computeDayNight(match.elapsed + (match.resultElapsed || 0)) : { light: 1 };
   const groundY = h * 0.82;
-
-  const g = bctx.createLinearGradient(0, 0, 0, groundY);
-  g.addColorStop(0, age.sky[0]); g.addColorStop(1, age.sky[1]);
-  bctx.fillStyle = g;
-  bctx.fillRect(0, 0, w, h);
-
-  bctx.fillStyle = age.hills2;
-  bctx.beginPath(); bctx.moveTo(0, h);
-  for (let x = 0; x <= w; x += 50) bctx.lineTo(x, groundY - h * 0.09 - Math.sin(x * 0.006 + 0.6) * h * 0.05);
-  bctx.lineTo(w, h); bctx.closePath(); bctx.fill();
-
-  bctx.fillStyle = age.hills;
-  bctx.beginPath(); bctx.moveTo(0, h);
-  for (let x = 0; x <= w; x += 50) bctx.lineTo(x, groundY - h * 0.05 - Math.sin(x * 0.009 + 2.1) * h * 0.035);
-  bctx.lineTo(w, h); bctx.closePath(); bctx.fill();
-
-  bctx.fillStyle = age.ground;
-  bctx.fillRect(0, groundY, w, h - groundY);
-
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // фон декоративный — экономим на дискретности
+  const key = `${age.id}|${w}x${h}|${dpr}`;
+  if (!backdropCache || backdropCache.key !== key) {
+    backdropCache = { key, sky: bakeSky(age, w, h, groundY, dpr), land: bakeLand(age, w, h, groundY, dpr, 0.45) };
+  }
+  bctx.drawImage(backdropCache.sky, 0, 0, w, h);
+  bctx.drawImage(backdropCache.land, 0, 0, w, h);
   const darkness = (1 - dn.light) * 0.5;
   if (darkness > 0.02) {
-    bctx.fillStyle = `rgba(8,10,26,${darkness})`;
+    bctx.fillStyle = `rgba(10,14,40,${darkness})`;
     bctx.fillRect(0, 0, w, h);
   }
 }
 function resizeBackdrop() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // фон декоративный — экономим на дискретности
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   backdrop.width = backdrop.clientWidth * dpr;
   backdrop.height = backdrop.clientHeight * dpr;
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -336,6 +501,11 @@ const PORTRAIT_TOUCH_MQ = window.matchMedia('(pointer: coarse) and (orientation:
 function showScreen(name) {
   if (name === 'match' && PORTRAIT_TOUCH_MQ.matches) name = 'paused';
   screen = name;
+  // CrazyGames gameplayStart/Stop (методичка §2) — шире pauseHook/resumeHook
+  // (те — только вокруг рекламы, см. PLATFORM.setPauseHooks() ниже): любой
+  // переход на/с экрана боя, включая паузу/меню/итог, no-op на других
+  // площадках (проверка kind — внутри PLATFORM.setGameplayActive()).
+  PLATFORM.setGameplayActive(name === 'match');
   // Отсчёт 3…2…1 (раунд 5) сам прячется только когда update() успевает
   // досчитать до конца — если экран сменился раньше (пауза/выход во время
   // отсчёта), оверлей иначе застревал видимым поверх всех следующих
@@ -383,11 +553,13 @@ function chapterRowSVG(ch, chapterIdx) {
   const W = 300, H = 84;
   const yPat = CHAPTER_Y_PATTERNS[chapterIdx % CHAPTER_Y_PATTERNS.length];
   const xs = [36, 150, 264];
-  const hue = 210 + chapterIdx * 24;
+  // Раунд 14 (сепия/дерево): холмы «местности» — тёплые охристые тона,
+  // от закатной охры к оливе по мере глав (было — синие hue 210+).
+  const hue = 28 + chapterIdx * 10;
   let svg = `<svg class="chapter-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
   // «местность» — пара мягких перекрывающихся холмов позади дорожки
-  svg += `<ellipse cx="${W * 0.28}" cy="${H * 0.75}" rx="90" ry="30" fill="hsla(${hue},55%,45%,.18)"/>`;
-  svg += `<ellipse cx="${W * 0.72}" cy="${H * 0.3}" rx="100" ry="28" fill="hsla(${hue + 30},55%,45%,.14)"/>`;
+  svg += `<ellipse cx="${W * 0.28}" cy="${H * 0.75}" rx="90" ry="30" fill="hsla(${hue},50%,50%,.18)"/>`;
+  svg += `<ellipse cx="${W * 0.72}" cy="${H * 0.3}" rx="100" ry="28" fill="hsla(${hue + 20},45%,50%,.14)"/>`;
   // волнистые пунктирные дорожки между соседними узлами (квадратичная
   // безье с перпендикулярным смещением контрольной точки — не прямая)
   for (let i = 0; i < xs.length - 1; i++) {
@@ -396,7 +568,7 @@ function chapterRowSVG(ch, chapterIdx) {
     const wave = (i % 2 === 0 ? 1 : -1) * 22;
     const cleared = (ch.id - 1) * MISSIONS_PER_CHAPTER + i + 1 < progress.unlocked;
     svg += `<path d="M${x1},${y1} Q${mx},${my + wave} ${x2},${y2}" fill="none"
-      stroke="${cleared ? 'var(--gold-text)' : 'rgba(255,255,255,.35)'}" stroke-width="3"
+      stroke="${cleared ? 'var(--gold-text)' : 'rgba(255,225,180,.35)'}" stroke-width="3"
       stroke-dasharray="7 6" stroke-linecap="round"/>`;
   }
   for (let lvl = 1; lvl <= MISSIONS_PER_CHAPTER; lvl++) {
@@ -405,10 +577,10 @@ function chapterRowSVG(ch, chapterIdx) {
     const unlocked = m.id <= progress.unlocked;
     const cleared = m.id < progress.unlocked;
     const cls = 'trail-node-svg' + (unlocked ? '' : ' locked') + (cleared ? ' cleared' : '');
-    const fill = cleared ? 'url(#trailCleared)' : unlocked ? 'url(#trailOpen)' : '#3a3f66';
+    const fill = cleared ? 'url(#trailCleared)' : unlocked ? 'url(#trailOpen)' : '#4a3a2c';
     svg += `<g class="${cls}" data-mission-index="${missionIndex}" data-unlocked="${unlocked}">
       <circle cx="${xs[lvl - 1]}" cy="${yPat[lvl - 1]}" r="16" fill="${fill}" stroke="var(--ink)" stroke-width="3"/>
-      <text x="${xs[lvl - 1]}" y="${yPat[lvl - 1] + 5}" text-anchor="middle" font-family="'Lilita One',sans-serif" font-size="15" fill="${unlocked ? '#3a2f22' : '#b7bce0'}">${unlocked ? lvl : '🔒'}</text>
+      <text x="${xs[lvl - 1]}" y="${yPat[lvl - 1] + 5}" text-anchor="middle" font-family="'Lilita One',sans-serif" font-size="15" fill="${unlocked ? '#3a2f22' : '#b8a890'}">${unlocked ? lvl : '🔒'}</text>
     </g>`;
   }
   svg += '</svg>';
@@ -417,10 +589,10 @@ function chapterRowSVG(ch, chapterIdx) {
 function renderChapterTrail() {
   const defs = `<svg width="0" height="0"><defs>
     <linearGradient id="trailOpen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffe873"/><stop offset="1" stop-color="#ffb300"/>
+      <stop offset="0" stop-color="#ffe08a"/><stop offset="1" stop-color="#e0a030"/>
     </linearGradient>
     <linearGradient id="trailCleared" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#7bfa8a"/><stop offset="1" stop-color="#1fa63e"/>
+      <stop offset="0" stop-color="#7bd98a"/><stop offset="1" stop-color="#2f8f45"/>
     </linearGradient>
   </defs></svg>`;
   DOM.chapterTrail.innerHTML = defs + CHAPTERS.map((ch, i) => `
@@ -1034,10 +1206,17 @@ function startMission(index, opts = {}) {
     introHintActive: false,
     currentBattleTrack: null, musicPulseOverride: false, // раунд 10: плейлист + форс-переключение на "Пульс"
   };
-  world.onCoreHit = (core) => shakeScreen(match, core.team === 'player' ? 3 : 3);
+  // Раунд 14: все эффекты — через vfx.js (типизированные частицы, кольца,
+  // щепки, всплывающие «+N»), а не одинаковые квадратики на любой повод.
+  world.onCoreHit = (core) => {
+    shakeScreen(match, 3);
+    VFX.coreHit(match, core.x + (core.team === 'player' ? CORE_KEEP_FAR : -CORE_KEEP_FAR));
+  };
   world.onCoreDestroyed = (core) => { if (!match.resolved) endMatch(core.team === 'player' ? 'lose' : 'win'); };
-  world.onUnitDeath = (u) => spawnParticles(match, u.x, -20, u.team === 'player' ? '#e9dcc0' : '#c9d3dd', 10);
-  world.onImpact = (x) => spawnParticles(match, x, -30, '#f2d477', 4);
+  world.onUnitDeath = (u) => VFX.unitDeath(match, u.x);
+  world.onImpact = (x) => VFX.impact(match, x);
+  // Искры в точке контакта ближнего удара (у дальнего — уже onImpact).
+  world.onHit = (ref, role) => { if (role !== 'ranged') VFX.meleeHit(match, ref.x, -34, ref.team !== 'player'); };
   world.onHeroDown = () => {
     shakeScreen(match, 6);
     SFX.heroDown();
@@ -1048,11 +1227,11 @@ function startMission(index, opts = {}) {
     void DOM.heroDownFlash.offsetWidth; // рестарт CSS-анимации
     DOM.heroDownFlash.classList.add('flash');
   };
-  world.onHeroSpecial = (x) => { spawnParticles(match, x, -20, '#f2c94c', 22); shakeScreen(match, 5); };
-  world.onHeroKill = (x) => { match.gold += match.heroBackpackCoins; spawnParticles(match, x, -22, '#f2d477', 6); };
-  world.onPickaxe = (x) => { match.gold += HERO.pickaxeGold; spawnParticles(match, x, -4, '#f2d477', 12); spawnParticles(match, x, -4, '#cfd6de', 6); };
-  world.onGlyph = (x) => spawnParticles(match, x, -50, '#8fd6ff', 18);
-  world.onCry = (x) => { spawnParticles(match, x, -30, '#ff8a5c', 20); shakeScreen(match, 4); };
+  world.onHeroSpecial = (x) => { VFX.heroSpecial(match, x, HERO.specialRange); shakeScreen(match, 5); };
+  world.onHeroKill = (x) => { match.gold += match.heroBackpackCoins; VFX.heroKill(match, x, match.heroBackpackCoins); };
+  world.onPickaxe = (x) => { match.gold += HERO.pickaxeGold; VFX.pickaxe(match, x, HERO.pickaxeGold); };
+  world.onGlyph = (x) => VFX.burst(match, 'ember', x, -50, 18, { speed: 50, life: 0.9, size: 2.2, colors: ['#8fd6ff', '#d6f0ff'], gravity: 0, jitter: 40 });
+  world.onCry = (x) => { VFX.cry(match, x); shakeScreen(match, 4); };
   // Ночная правка (находки ревьюеров): и штраф за золото, и элитные волны/
   // бафы базы раньше были невидимы игроку и не объяснялись при поражении.
   // Запоминаем последнее "опасное" событие с таймстампом — если поражение
@@ -1069,7 +1248,7 @@ function startMission(index, opts = {}) {
   world.onStructureDestroyed = (kind, ref) => {
     if ((kind === 'tower' || kind === 'trap') && ref.shopKey) progress[ref.shopKey] = false;
     saveProgress(progress);
-    spawnParticles(match, ref.x, -20, '#8a8a8a', 14);
+    VFX.structureDown(match, ref.x);
   };
 
   buildToolbar();
@@ -1140,9 +1319,11 @@ function currentUpgradeCost() {
 function drawUnitIcon(canvas, t, age) {
   const c = canvas.getContext('2d');
   c.clearRect(0, 0, canvas.width, canvas.height);
+  // Раунд 14: риг стал в RIG_K раз крупнее — иконка делит масштаб обратно,
+  // чтобы влезать в тот же канвас 40×44 (см. buildToolbar).
   drawStickman(c, {
-    x: canvas.width / 2, y: canvas.height - 3, scale: 0.85,
-    color: '#e9dcc0', outline: '#221a10', facing: 1,
+    x: canvas.width / 2, y: canvas.height - 3, scale: 0.85 / RIG_K,
+    color: ART.player.fill, outline: ART.player.outline, facing: 1, shadow: false,
     walkPhase: Math.PI * 0.4, moving: true, weapon: age.weapon[t.role], roleAccent: ROLE_ACCENT[t.role],
   });
 }
@@ -1172,8 +1353,8 @@ function drawHelpUnitIcon(canvas, t, age) {
   const c = canvas.getContext('2d');
   c.clearRect(0, 0, canvas.width, canvas.height);
   drawStickman(c, {
-    x: canvas.width / 2, y: canvas.height - 4, scale: 1.1,
-    color: '#e9dcc0', outline: '#221a10', facing: 1,
+    x: canvas.width / 2, y: canvas.height - 4, scale: 1.1 / RIG_K,
+    color: ART.player.fill, outline: ART.player.outline, facing: 1, shadow: false, time: helpAnimPhase / 4,
     walkPhase: helpAnimPhase, moving: true, weapon: age.weapon[t.role], roleAccent: ROLE_ACCENT[t.role],
   });
 }
@@ -1190,8 +1371,8 @@ function drawHeroActionIcon(canvas, kind) {
   const cx = canvas.width / 2, groundY = canvas.height - 4;
   const cyclePos = (helpAnimPhase % (Math.PI * 2)) / (Math.PI * 2);
   const heroBase = {
-    x: cx, y: groundY, scale: 1.1, color: '#f4e6b8', outline: '#5a3d0f',
-    facing: 1, hero: true, weapon: match.age.weapon.melee,
+    x: cx, y: groundY, scale: 1.1 / RIG_K, color: ART.hero.fill, outline: ART.hero.outline,
+    facing: 1, hero: true, weapon: match.age.weapon.melee, attackProfile: 'hero', shadow: false, time: helpAnimPhase / 4,
   };
   if (kind === 'walk') {
     drawStickman(c, { ...heroBase, walkPhase: helpAnimPhase, moving: true });
@@ -1201,18 +1382,20 @@ function drawHeroActionIcon(canvas, kind) {
     drawStickman(c, { ...heroBase, walkPhase: helpAnimPhase, moving: false });
     c.save();
     c.globalAlpha = 1 - cyclePos;
-    c.strokeStyle = '#f2c94c'; c.lineWidth = 2;
-    c.beginPath(); c.arc(cx, groundY - 18, cyclePos * (canvas.width * 0.42), 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = ART.hero.goldGlow; c.lineWidth = 6;
+    c.beginPath(); c.ellipse(cx, groundY - 3, cyclePos * (canvas.width * 0.45), cyclePos * (canvas.width * 0.45) * 0.42, 0, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = ART.hero.gold; c.lineWidth = 2;
+    c.beginPath(); c.ellipse(cx, groundY - 3, cyclePos * (canvas.width * 0.45), cyclePos * (canvas.width * 0.45) * 0.42, 0, 0, Math.PI * 2); c.stroke();
     c.restore();
   } else if (kind === 'pickaxe') {
     drawStickman(c, { ...heroBase, walkPhase: 0, moving: false, digPhase: cyclePos });
   } else if (kind === 'cry') {
     const pulse = 0.5 + 0.5 * Math.sin(helpAnimPhase * 2);
-    drawStickman(c, { ...heroBase, walkPhase: helpAnimPhase, moving: true, hitFlash: pulse * 0.35 });
+    drawStickman(c, { ...heroBase, walkPhase: helpAnimPhase, moving: true, buffed: true });
     c.save();
     c.globalAlpha = 0.5 * pulse;
-    c.strokeStyle = '#f2c94c'; c.lineWidth = 2;
-    c.beginPath(); c.arc(cx, groundY - 18, canvas.width * 0.4, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = ART.cryAura; c.lineWidth = 2;
+    c.beginPath(); c.ellipse(cx, groundY - 3, canvas.width * 0.42, canvas.width * 0.42 * 0.42, 0, 0, Math.PI * 2); c.stroke();
     c.restore();
   } else if (kind === 'revive') {
     const pulse = 0.5 + 0.5 * Math.sin(helpAnimPhase * 2.2);
@@ -1263,7 +1446,7 @@ function drawBuyUnitBar(canvas) {
     if (c.roundRect) { c.beginPath(); c.roundRect(x - slotW / 2 + 2, 2, slotW - 4, canvas.height - 4, 6); c.fill(); c.stroke(); }
     c.restore();
     drawStickman(c, {
-      x, y: canvas.height - 14, scale: 0.62, color: '#e9dcc0', outline: '#221a10',
+      x, y: canvas.height - 14, scale: 0.62 / RIG_K, color: ART.player.fill, outline: ART.player.outline, shadow: false,
       facing: 1, walkPhase: helpAnimPhase, moving: true, weapon: match.age.weapon[t.role], roleAccent: ROLE_ACCENT[t.role],
     });
     c.fillStyle = '#f2d477'; c.font = 'bold 9px sans-serif'; c.textAlign = 'center';
@@ -1487,19 +1670,14 @@ function updateHud() {
 }
 
 // ---------------------------------------------------------------- particles & shake
-function spawnParticles(m, x, y, color, count) {
-  for (let i = 0; i < count; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const sp = 40 + Math.random() * 90;
-    m.particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.4 + Math.random() * 0.3, age: 0, color });
-  }
+// Раунд 14: частицы живут в vfx.js (типы spark/dust/ember/chip/ring/flash,
+// лимит ART.particleCap). Эти две функции — тонкие обёртки с прежней
+// сигнатурой для старых вызовов (салют, экран итога); y — по-прежнему
+// смещение от линии земли.
+function spawnParticles(m, x, y, color, count, type = 'spark') {
+  VFX.burst(m, type, x, y, count, { color, speed: 100, life: 0.5, size: 3, lift: 40 });
 }
-function updateParticles(m, dt) {
-  for (const p of m.particles) {
-    p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 220 * dt;
-  }
-  m.particles = m.particles.filter(p => p.age < p.life);
-}
+function updateParticles(m, dt) { VFX.update(m, dt); }
 function shakeScreen(m, mag) { m.shake.mag = Math.max(m.shake.mag, mag); }
 function updateShake(m, dt) {
   m.shake.mag = Math.max(0, m.shake.mag - dt * 24);
@@ -1539,6 +1717,11 @@ function endMatch(result) {
     if (nextMission > progress.unlocked && nextMission <= MISSIONS.length) {
       progress.unlocked = nextMission; saveProgress(progress);
     }
+    // Лидерборд CrazyGames (решение сессии 20.09.2026, см. КОНЦЕПТ_ГДД.md,
+    // «Допущения» — «Что считать „очком" лидерборда»): номер только что
+    // пройденной миссии, не на поражении. На остальных площадках/локально
+    // PLATFORM.submitScore() — no-op (см. js/platform.js).
+    PLATFORM.submitScore(match.mission.id);
     DOM.resultTitle.textContent = isCampaignComplete ? I18N.t('result.campaignComplete') : I18N.t('result.victory');
     // Утро 08.09.2026 (баг-репорт основателя): окно победы было «явно
     // слишком длинное» — после заголовка убран весь текст, кроме крупной
@@ -1686,7 +1869,9 @@ function fireCampaignFireworks(m) {
     if (!m || m.resolved !== true || screen !== 'result' || bursts >= 7) { clearInterval(timer); return; }
     const x = ARENA.width * (0.15 + Math.random() * 0.7);
     const color = colors[bursts % colors.length];
-    spawnParticles(m, x, -40 - Math.random() * 60, color, 14);
+    const y = -40 - Math.random() * 60;
+    VFX.spawn(m, 'flash', x, y, { size: 30, life: 0.3, color, gravity: 0 });
+    VFX.burst(m, 'spark', x, y, 18, { color, speed: 150, life: 0.7, size: 2.8, gravity: 120 });
     bursts++;
   }, 550);
 }
@@ -1954,7 +2139,11 @@ function computeDayNight(elapsed) {
   const sunUp = t < 0.5;
   const localT = sunUp ? t / 0.5 : (t - 0.5) / 0.5;
   const alt = Math.sin(Math.PI * localT); // 0..1 — высота дуги
-  const light = sunUp ? alt : alt * 0.15; // лунный свет много слабее
+  // Раунд 14: дневная фаза не проваливается в полумрак у горизонта — на
+  // старте матча (elapsed≈0) солнце как раз у горизонта, и при light=alt
+  // арена в первые секунды была затемнена на 50% синеватой плёнкой, а
+  // закат обложки — тёплый и светлый. Ночь (лунная фаза) не менялась.
+  const light = sunUp ? 0.45 + 0.55 * alt : alt * 0.15; // лунный свет много слабее
   return { sunUp, localT, alt, light };
 }
 
@@ -1966,95 +2155,75 @@ function render() {
   // фон не превращается в статичный кадр (см. frame()).
   const displayElapsed = match.elapsed + (match.resultElapsed || 0);
   const dn = computeDayNight(displayElapsed);
-  const wind = displayElapsed * 0.15;
+  // Статичные слои запечены один раз на миссию (bakeArenaBackground):
+  // небо → солнце/луна → облака → горы+земля → мошки → ночное затемнение.
+  if (!match.bg || match.bg.ageId !== age.id) match.bg = bakeArenaBackground(age);
+  const bgW = ARENA.width + BG_PAD * 2, bgH = ARENA.height + BG_PAD * 2;
   ctx.save();
   ctx.translate(match.shake.x, match.shake.y);
+  ctx.drawImage(match.bg.sky, -BG_PAD, -BG_PAD, bgW, bgH);
 
-  // небо
-  const g = ctx.createLinearGradient(0, 0, 0, ARENA.groundY);
-  g.addColorStop(0, age.sky[0]); g.addColorStop(1, age.sky[1]);
-  ctx.fillStyle = g;
-  ctx.fillRect(-10, -10, ARENA.width + 20, ARENA.height + 20);
-
-  // солнце/луна по дуге неба
+  // солнце/луна по дуге неба; ореол у горизонта — большой и тёплый (закат
+  // обложки), в зените — компактнее
   const bodyX = 90 + dn.localT * (ARENA.width - 180);
   const bodyY = ARENA.groundY - 30 - dn.alt * 210;
-  ctx.save();
-  const glowR = dn.sunUp ? 42 : 30;
+  const low = 1 - dn.alt;
+  const glowR = dn.sunUp ? 70 + low * 110 : 34 + low * 16;
   const glow = ctx.createRadialGradient(bodyX, bodyY, 0, bodyX, bodyY, glowR);
-  glow.addColorStop(0, dn.sunUp ? 'rgba(255,240,180,.55)' : 'rgba(205,218,255,.4)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  if (dn.sunUp) {
+    glow.addColorStop(0, hexAlpha(age.sunGlow, 0.8));
+    glow.addColorStop(0.3, hexAlpha(age.sunGlow, 0.3));
+    glow.addColorStop(1, hexAlpha(age.sunGlow, 0));
+  } else {
+    glow.addColorStop(0, 'rgba(205,218,255,.4)');
+    glow.addColorStop(1, 'rgba(205,218,255,0)');
+  }
   ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(bodyX, bodyY, glowR, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = dn.sunUp ? '#fff2c0' : '#e2eaff';
-  ctx.beginPath(); ctx.arc(bodyX, bodyY, dn.sunUp ? 15 : 11, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
+  ctx.fillRect(bodyX - glowR, bodyY - glowR, glowR * 2, glowR * 2);
+  ctx.fillStyle = dn.sunUp ? '#fff1c8' : '#e6ecff';
+  ctx.beginPath(); ctx.arc(bodyX, bodyY, dn.sunUp ? 16 : 11, 0, Math.PI * 2); ctx.fill();
 
-  // облака — раунд 5, простой процедурный слой, дрейфуют по ветру
+  // облака — между солнцем и горами, дрейфуют по ветру
   for (const c of match.clouds) drawCloud(c.x, c.y, c.scale);
 
-  // холмы — два слоя на разных синусоидах (дальний светлее и выше, ближний
-  // темнее и ниже) дают ощущение глубины без реального параллакса
-  // (подход подсказан живым тестом соседней студии, см. ПЛАН.md); фаза
-  // синусоид медленно плывёт во времени — читается как лёгкий ветер.
-  ctx.fillStyle = age.hills2;
-  ctx.beginPath();
-  ctx.moveTo(0, ARENA.groundY);
-  for (let x = 0; x <= ARENA.width; x += 40) {
-    ctx.lineTo(x, ARENA.groundY - 44 - Math.sin(x * 0.0037 + 0.6 + wind * 0.6) * 26 - Math.sin(x * 0.011 + 2) * 8);
-  }
-  ctx.lineTo(ARENA.width, ARENA.groundY); ctx.closePath(); ctx.fill();
+  ctx.drawImage(match.bg.land, -BG_PAD, -BG_PAD, bgW, bgH);
+  drawMotes(age, displayElapsed);
 
-  ctx.fillStyle = age.hills;
-  ctx.beginPath();
-  ctx.moveTo(0, ARENA.groundY);
-  for (let x = 0; x <= ARENA.width; x += 40) {
-    ctx.lineTo(x, ARENA.groundY - 26 - Math.sin(x * 0.006 + 1.5 + wind) * 20 - Math.sin(x * 0.017 + 4) * 7);
-  }
-  ctx.lineTo(ARENA.width, ARENA.groundY); ctx.closePath(); ctx.fill();
-
-  // земля
-  ctx.fillStyle = age.ground;
-  ctx.fillRect(0, ARENA.groundY, ARENA.width, ARENA.height - ARENA.groundY);
-  ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(0, ARENA.groundY + 0.5); ctx.lineTo(ARENA.width, ARENA.groundY + 0.5); ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(0, ARENA.groundY); ctx.lineTo(ARENA.width, ARENA.groundY); ctx.stroke();
-
-  // ночное затемнение — только фон/окружение, юниты и HUD остаются
-  // читаемыми в любое время суток
+  // ночное затемнение — только фон/окружение (постройки, юниты и HUD
+  // рисуются после и остаются читаемыми в любое время суток), синеватое
   const darkness = (1 - dn.light) * 0.5;
   if (darkness > 0.02) {
-    ctx.fillStyle = `rgba(8,10,26,${darkness})`;
-    ctx.fillRect(-10, -10, ARENA.width + 20, ARENA.height - (ARENA.height - ARENA.groundY) + 20);
+    ctx.fillStyle = `rgba(10,14,40,${darkness})`;
+    ctx.fillRect(-BG_PAD, -BG_PAD, bgW, bgH);
   }
 
   drawCore(match.world.playerCore, 1, age);
   drawCore(match.world.enemyCore, -1, age);
-  drawFarm(28, match.incomeLevel, match.farmPulse, age);
+  drawFarm(16, match.incomeLevel, match.farmPulse, age);
   for (const tw of match.world.towers) drawTower(tw);
   for (const tw of match.world.enemyTowers) drawTower(tw);
   for (const tr of match.world.traps) drawTrap(tr);
 
-  for (const p of match.world.projectiles) {
-    ctx.save(); ctx.translate(p.x, ARENA.groundY - 40);
-    ctx.fillStyle = '#f2d477';
-    ctx.beginPath(); ctx.ellipse(0, 0, 6, 2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
+  // Раунд 14: снаряды со своей формой и дугой полёта (vfx.js), не жёлтые
+  // капли; юниты — свои светлые, враги чёрные силуэты (ART, решение
+  // основателя 2026-09-19), время — для дыхания в покое и пульса ауры.
+  for (const p of match.world.projectiles) VFX.drawProjectile(ctx, p, age, ARENA.groundY);
 
   const celebrate = screen === 'result' && lastResult === 'win';
+  const poseTime = match.elapsed + (match.resultElapsed || 0);
   for (const u of match.world.units) {
     const t = UNIT_TYPES[u.typeId];
     const weapon = age.weapon[t.role] || null;
     const attackPhase = u.state === 'attack' ? (1 - Math.max(0, u.attackTimer) / t.atkInterval) : null;
     const deathT = u.state === 'dead' ? u.deathT : null;
     const cheer = celebrate && u.team === 'player' && !deathT;
+    const enemy = u.team !== 'player';
     const commonPose = {
       x: u.x + (u.knockback || 0), y: ARENA.groundY,
       scale: (u.elite ? 1.35 : 1) * (t.heightMult || 1),
-      color: u.team === 'player' ? '#e9dcc0' : '#c9d3dd',
-      outline: u.elite ? '#7a1f1f' : '#221a10',
+      color: enemy ? ART.enemy.fill : ART.player.fill,
+      outline: enemy ? (u.elite ? ART.enemy.eliteOutline : ART.enemy.outline) : ART.player.outline,
+      enemy, elite: !!u.elite, buffed: u.buffTimer > 0, time: poseTime + (u.id % 7) * 0.9,
       facing: u.dir,
       walkPhase: cheer ? match.resultElapsed * 6 : u.walkPhase,
       moving: cheer ? true : u.state === 'walk',
@@ -2079,9 +2248,9 @@ function render() {
   if (hero.alive) {
     drawStickman(ctx, {
       x: hero.x + (hero.knockback || 0), y: ARENA.groundY, scale: 1.12,
-      color: '#f4e6b8', outline: '#5a3d0f', facing: hero.facing,
+      color: ART.hero.fill, outline: ART.hero.outline, facing: hero.facing,
       walkPhase: hero.walkPhase, moving: hero.moving,
-      attackPhase: hero.attackAnimT,
+      attackPhase: hero.attackAnimT, attackProfile: 'hero', time: poseTime,
       digPhase: hero.pickaxeAnimT,
       hitFlash: hero.hitFlash,
       weapon: age.weapon.melee,
@@ -2091,260 +2260,351 @@ function render() {
       gearSwordTier: progress.gearSword, gearShieldTier: progress.gearShield, gearArmorTier: progress.gearArmor,
       cloak: !!progress.ownedCloakRed, cloakFlareT: hero.cloakFlareT || 0,
     });
-    if (hero.specialAnimT !== null) {
-      ctx.save();
-      ctx.globalAlpha = 1 - hero.specialAnimT;
-      ctx.strokeStyle = '#f2c94c'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(hero.x, ARENA.groundY - 20, HERO.specialRange * hero.specialAnimT, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    }
+    // Кольцо спец-удара — теперь ударная волна из vfx.js (world.onHeroSpecial).
   }
 
-  ctx.fillStyle = '#f2c94c';
-  for (const p of match.particles) {
-    ctx.globalAlpha = Math.max(0, 1 - p.age / p.life);
-    ctx.fillStyle = p.color;
-    // p.y хранится как смещение от линии земли (см. spawnParticles),
-    // а не абсолютная канвас-координата — иначе частицы рисуются у
-    // верхнего края экрана вместо места события (баг, найден при проверке
-    // кирки в раунде 3, но касался всех эффектов — смерть/удар/спец-удар).
-    ctx.fillRect(p.x - 2, ARENA.groundY + p.y - 2, 4, 4);
-  }
-  ctx.globalAlpha = 1;
+  // Частицы и всплывающие «+N» — p.y хранится как смещение от линии земли
+  // (не абсолютная канвас-координата — баг раунда 3, см. историю).
+  VFX.draw(ctx, match, ARENA.groundY);
 
   ctx.restore();
 }
 
-// Вид базы — по фидбэку основателя после раунда 1 самое слабое место
-// визуала: раньше два столба+перекладина, теперь укреплённая башня со
-// своим стилем на эпоху, следами повреждений и дымом при низком HP.
-// Здание апгрейда дохода — растёт с уровнем, при покупке подскакивает и
-// оседает (фидбэк основателя, раунд 3: доход должен быть виден на поле,
-// не только числом в HUD).
+// Постройки «под обложку» (раунд 14, ТЗ_ВИЗУАЛ_ПОД_ОБЛОЖКУ.md): дерево и
+// камень из палитры эпохи (AGES.woodLight/woodDark/stone), тёмные щели,
+// тёплые блики. Здание апгрейда дохода — хижина, растёт с уровнем, при
+// покупке подскакивает (фидбэк основателя, раунд 3: доход должен быть
+// виден на поле, не только числом в HUD). Стоит у подножия холма
+// крепости (x=16), левее частокола — на холме её закрыла бы стена.
 function drawFarm(x, level, pulse, age) {
   const bounce = pulse > 0 ? Math.sin(pulse * Math.PI) * 5 : 0;
-  const h = 10 + level * 5 + bounce;
+  const lvl = Math.min(level, 6);
+  const h = 14 + lvl * 4 + bounce;
+  const w = 10 + Math.min(lvl, 4);
   ctx.save();
   ctx.translate(x, ARENA.groundY);
-  ctx.fillStyle = age.coreDark;
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.rect(-9, -h, 18, h); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.rect(-w, -h, w * 2, h); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 1;
+  for (let ly = -h + 4; ly < -3; ly += 4) { ctx.beginPath(); ctx.moveTo(-w + 1, ly); ctx.lineTo(w - 1, ly); ctx.stroke(); }
+  ctx.fillStyle = '#1a100a'; ctx.fillRect(-3, -9, 6, 9);
+  const peak = h + 9 + Math.min(lvl, 4) * 1.5;
+  ctx.fillStyle = age.woodDark; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-w - 4, -h); ctx.lineTo(0, -peak); ctx.lineTo(w + 4, -h); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,230,190,.16)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-w - 3, -h - 1); ctx.lineTo(-1, -peak + 2); ctx.stroke();
+  // труба и дымок — доход «работает»
+  ctx.fillStyle = age.stone; ctx.fillRect(w - 6, -h - 9, 4, 9);
+  drawSmoke(w - 4, -h - 10, performance.now(), 2, 'rgba(216,208,200,.3)', 0.5);
+  // табличка уровня
+  ctx.fillStyle = '#d9c39a'; ctx.strokeStyle = age.woodDark; ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(-11, -h); ctx.lineTo(0, -h - 9); ctx.lineTo(11, -h); ctx.closePath();
-  ctx.fillStyle = age.coreAccent; ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#f2d477';
-  ctx.beginPath(); ctx.arc(0, -h + 7, 4, 0, Math.PI * 2); ctx.fill();
-  ctx.font = 'bold 7px sans-serif'; ctx.fillStyle = '#3a2f22'; ctx.textAlign = 'center';
-  ctx.fillText(String(level), 0, -h + 9.5);
+  if (ctx.roundRect) ctx.roundRect(-6, -h + 2, 12, 8, 1.5); else ctx.rect(-6, -h + 2, 12, 8);
+  ctx.fill(); ctx.stroke();
+  ctx.font = 'bold 7px sans-serif'; ctx.fillStyle = '#3a2a16'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(String(level), 0, -h + 8.5);
   ctx.restore();
 }
 
-// Башня лучника и капкан — покупки из магазина (см. ПЛАН.md, раунд 3).
-// Башня лучника (раунд 7, правка по фидбэку): убрана треугольная крыша —
-// вместо неё открытая площадка с зубцами и видимой фигуркой лучника,
-// который реально натягивает лук и стреляет (tw.fireFlash — короткая
-// вспышка выстрела, см. updateTowers/updateEnemyTowers).
+// Башня лучника — покупка магазина (ПЛАН.md, раунд 3): вышка в стиле
+// сторожевой башни крепости — столбы с перекрестьем, открытая площадка с
+// перилами и лучник, который натягивает лук (tw.fireFlash — вспышка
+// выстрела, см. updateTowers/updateEnemyTowers). Вражеские башни (ai.js)
+// рисуются той же функцией — своя/чужая определяется половиной арены
+// (все постройки игрока стоят в левой), лучник врага — чёрный силуэт.
 function drawTower(tw) {
+  const age = match.age;
+  const enemy = tw.x > ARENA.width / 2;
+  const fig = enemy ? ART.enemy : ART.player;
+  const face = enemy ? -1 : 1;
   ctx.save();
   ctx.translate(tw.x, ARENA.groundY);
-  const top = -46;
-  ctx.fillStyle = '#7a6a4a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.rect(-8, top, 16, 46); ctx.fill(); ctx.stroke();
-  // открытая площадка — карниз + зубцы по краю, никакой крыши
-  ctx.fillStyle = '#5a4c34';
-  ctx.beginPath(); ctx.rect(-11, top - 4, 22, 4); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#c9a35a';
-  for (const tx of [-9, 5]) { ctx.beginPath(); ctx.rect(tx, top - 9, 4, 5); ctx.fill(); ctx.stroke(); }
-  // лучник на площадке — натягивает лук, стрела уходит дальше при выстреле
+  const top = -50;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 4;
+  for (const px of [-8, 8]) { ctx.beginPath(); ctx.moveTo(px * 1.4, 0); ctx.lineTo(px, top + 2); ctx.stroke(); }
+  ctx.strokeStyle = age.woodLight; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.moveTo(-10, -10); ctx.lineTo(9, -28); ctx.moveTo(10, -10); ctx.lineTo(-9, -28); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-9, -28); ctx.lineTo(9, -28); ctx.stroke();
+  // площадка с перилами
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.rect(-14, top - 2, 28, 5); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 2;
+  for (const px of [-13, -4.5, 4.5, 13]) { ctx.beginPath(); ctx.moveTo(px, top - 2); ctx.lineTo(px, top - 11); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(-14, top - 11); ctx.lineTo(14, top - 11); ctx.stroke();
+  // лучник — тот же силуэтный язык, что у юнитов (ART.player/ART.enemy)
   const flash = tw.fireFlash || 0;
-  ctx.strokeStyle = '#221a10'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(-1, top - 4); ctx.lineTo(-1, top - 14); ctx.stroke();
-  ctx.fillStyle = '#e9dcc0'; ctx.strokeStyle = '#221a10'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(-1, top - 17, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.strokeStyle = '#c9b48a'; ctx.lineWidth = 1.6;
-  ctx.beginPath(); ctx.arc(4, top - 11, 6, -1.15, 1.15); ctx.stroke();
-  ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
-  const drawBack = 2 + flash * 5;
-  ctx.beginPath(); ctx.moveTo(4, top - 17); ctx.lineTo(4 - drawBack, top - 11); ctx.lineTo(4, top - 5); ctx.stroke();
+  const base = top - 2;
+  ctx.strokeStyle = fig.outline; ctx.lineWidth = 3.4;
+  ctx.beginPath(); ctx.moveTo(-1, base); ctx.lineTo(-1, base - 12); ctx.stroke();
+  ctx.strokeStyle = fig.fill; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-1, base); ctx.lineTo(-1, base - 12); ctx.stroke();
+  ctx.fillStyle = fig.fill; ctx.strokeStyle = fig.outline; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(-1, base - 16, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // лук и тетива — натяжение растёт с flash, вспышка у наконечника на выстреле
+  const bx = -1 + face * 5;
+  ctx.strokeStyle = age.woodLight; ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  if (face > 0) ctx.arc(bx, base - 9, 6.5, -1.2, 1.2); else ctx.arc(bx, base - 9, 6.5, Math.PI - 1.2, Math.PI + 1.2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(240,230,210,.9)'; ctx.lineWidth = 1;
+  const pull = 2 + flash * 5;
+  ctx.beginPath(); ctx.moveTo(bx, base - 15.4); ctx.lineTo(bx - face * pull, base - 9); ctx.lineTo(bx, base - 2.6); ctx.stroke();
   if (flash > 0.35) {
     ctx.fillStyle = `rgba(255,240,180,${Math.min(1, flash) * 0.7})`;
-    ctx.beginPath(); ctx.arc(11, top - 11, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(bx + face * 8, base - 9, 3.5, 0, Math.PI * 2); ctx.fill();
   }
   ctx.restore();
 }
-// Облака (раунд 5) — три перекрывающихся эллипса на позицию, простая
-// процедурная форма вместо спрайта (см. 03_АССЕТЫ.md, консистентность со
-// стилем игры — та же canvas-геометрия, что и весь остальной визуал).
+// Облака — мягкие, с тёплым оттенком заката: радиальный градиент подложкой
+// и три полупрозрачных эллипса (без shadowBlur, та же canvas-геометрия,
+// что и остальной визуал — см. 03_АССЕТЫ.md, консистентность).
 function drawCloud(x, y, scale) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scale, scale);
-  ctx.fillStyle = 'rgba(255,255,255,.22)';
+  const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 34);
+  g.addColorStop(0, 'rgba(255,236,210,.2)'); g.addColorStop(1, 'rgba(255,236,210,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(0, 0, 36, 13, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,240,222,.15)';
   ctx.beginPath();
-  ctx.ellipse(0, 0, 22, 9, 0, 0, Math.PI * 2);
-  ctx.ellipse(16, -4, 15, 8, 0, 0, Math.PI * 2);
-  ctx.ellipse(-15, -3, 14, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 22, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(16, -4, 15, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(-15, -3, 14, 6, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
+// Капкан — шипы из камня эпохи с тёплым бликом по левой грани.
 function drawTrap(trap) {
+  const age = match.age;
   ctx.save();
   ctx.translate(trap.x, ARENA.groundY);
-  ctx.fillStyle = '#8a8a8a'; ctx.strokeStyle = '#221a10'; ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = mixHex(age.stone, '#ffffff', 0.18); ctx.strokeStyle = age.woodDark; ctx.lineWidth = 1.5;
   for (let i = -10; i <= 10; i += 5) {
-    ctx.beginPath(); ctx.moveTo(i, -1); ctx.lineTo(i + 2, -9); ctx.lineTo(i + 4, -1); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 2, -10); ctx.lineTo(i + 4, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
   }
+  ctx.strokeStyle = 'rgba(255,230,190,.35)'; ctx.lineWidth = 1;
+  for (let i = -10; i <= 10; i += 5) { ctx.beginPath(); ctx.moveTo(i + 0.8, -1); ctx.lineTo(i + 2, -8); ctx.stroke(); }
   ctx.restore();
 }
-function drawBattlements(x0, x1, topY, color, teeth) {
-  const w = (x1 - x0) / (teeth * 2 - 1);
+// Дым — клубы, всплывающие по синусоиде и растущие; n клубов в цикле.
+function drawSmoke(x, y, now, n, color, speed = 0.35) {
+  const t = now / 1000;
   ctx.fillStyle = color;
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-  for (let i = 0; i < teeth; i++) {
-    const tx = x0 + i * w * 2;
-    ctx.beginPath(); ctx.rect(tx, topY - 11, w, 11); ctx.fill(); ctx.stroke();
+  for (let i = 0; i < n; i++) {
+    const p = (t * speed + i / n) % 1;
+    ctx.globalAlpha = (1 - p) * 0.9;
+    ctx.beginPath(); ctx.arc(x + Math.sin(t * 1.1 + i * 2.1) * 4 + p * 6, y - p * 30, 2.5 + p * 7, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+// Частокол: брёвна с заострёнными верхушками, чередование светлого/тёмного
+// дерева, тёплый блик по левой кромке, высоты чуть разные (детерминированно
+// по индексу). При HP<60% часть брёвен обломана и по стене идёт трещина.
+// bronze — две бронзовые полосы-обруча поперёк стены.
+function drawPalisade(age, x0, x1, baseY, top, hpFrac, bronze) {
+  const count = 12, pitch = (x1 - x0) / count, lw = pitch - 1;
+  for (let i = 0; i < count; i++) {
+    const lx = x0 + i * pitch;
+    const hv = ((i * 7) % 5) - 2;
+    const broken = hpFrac < 0.6 && (i === 3 || i === 8 || (hpFrac < 0.4 && i === 5));
+    const lt = broken ? top + 20 + ((i * 3) % 6) : top + hv;
+    ctx.fillStyle = i % 2 ? age.woodDark : age.woodLight;
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(lx, baseY);
+    ctx.lineTo(lx, lt + 5);
+    if (broken) { ctx.lineTo(lx + lw * 0.3, lt + 2); ctx.lineTo(lx + lw * 0.6, lt + 6); ctx.lineTo(lx + lw, lt + 3); }
+    else ctx.lineTo(lx + lw / 2, lt);
+    ctx.lineTo(lx + lw, lt + 5);
+    ctx.lineTo(lx + lw, baseY);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,230,190,.16)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(lx + 1.2, baseY - 1); ctx.lineTo(lx + 1.2, lt + 6); ctx.stroke();
+  }
+  if (hpFrac < 0.6) {
+    ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(x0 + 14, top + 24); ctx.lineTo(x0 + 18, top + 34); ctx.lineTo(x0 + 15, top + 46); ctx.stroke();
+  }
+  if (bronze) {
+    ctx.fillStyle = age.coreAccent; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1;
+    for (const fy of [top + 18, top + 38]) { ctx.beginPath(); ctx.rect(x0, fy, x1 - x0 - 2, 3); ctx.fill(); ctx.stroke(); }
   }
 }
+// Кладка (iron): тело стены, ряды блоков со сдвигом, зубцы поверху, железные
+// накладки с заклёпками. Повреждения — трещина и выбитые блоки.
+function drawMasonryWall(age, x0, x1, baseY, top, hpFrac) {
+  ctx.fillStyle = age.stone; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.rect(x0, top + 4, x1 - x0, baseY - top - 4); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 1;
+  let row = 0;
+  for (let ly = top + 12; ly < baseY - 2; ly += 8, row++) {
+    ctx.beginPath(); ctx.moveTo(x0, ly); ctx.lineTo(x1, ly); ctx.stroke();
+    for (let lx = x0 + (row % 2 ? 6 : 0); lx < x1; lx += 12) { ctx.beginPath(); ctx.moveTo(lx, ly - 8); ctx.lineTo(lx, ly); ctx.stroke(); }
+  }
+  ctx.fillStyle = age.stone; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+  for (let lx = x0; lx < x1 - 4; lx += 12) { ctx.beginPath(); ctx.rect(lx, top - 4, 7, 8); ctx.fill(); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1;
+  for (const [px, py] of [[x0 + 6, top + 22], [x0 + 46, top + 22], [x0 + 26, top + 38]]) {
+    ctx.fillStyle = '#5e636c';
+    ctx.beginPath(); ctx.rect(px, py, 16, 9); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#a8aeb8';
+    for (const [rx, ry] of [[2, 2], [13, 2], [2, 6], [13, 6]]) ctx.fillRect(px + rx, py + ry, 1.5, 1.5);
+  }
+  if (hpFrac < 0.6) {
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(x0 + 30, top + 6); ctx.lineTo(x0 + 34, top + 18); ctx.lineTo(x0 + 29, top + 30); ctx.lineTo(x0 + 35, top + 44); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.fillRect(x0 + 12, top + 12, 12, 8);
+    if (hpFrac < 0.4) ctx.fillRect(x0 + 60, top + 28, 12, 8);
+  }
+  ctx.fillStyle = 'rgba(255,235,210,.08)'; ctx.fillRect(x0, top + 4, x1 - x0, 2);
+}
+// Сторожевая башня: четыре столба (задние темнее), площадка с перилами,
+// стенка с окном (iron — труба с дымом), пирамидальная крыша с выносом,
+// флаг на шесте выше крыши (ART.flags; косметика «золотой флаг» — только у
+// своей крепости). Флаг развевается прочь от линии боя — в зеркале тоже.
+function drawWatchtower(age, cx, baseY, platY, side, now, iron) {
+  const hw = 15;
+  const roofY = platY - 12, apexY = roofY - 22;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 3.2;
+  for (const dx of [-8, 8]) { ctx.beginPath(); ctx.moveTo(cx + dx * 1.15, baseY); ctx.lineTo(cx + dx, platY); ctx.stroke(); }
+  ctx.strokeStyle = age.woodLight; ctx.lineWidth = 3.6;
+  for (const dx of [-12, 12]) { ctx.beginPath(); ctx.moveTo(cx + dx * 1.15, baseY); ctx.lineTo(cx + dx, platY); ctx.stroke(); }
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(cx - 12, baseY - 14); ctx.lineTo(cx + 12, platY + 14); ctx.moveTo(cx + 12, baseY - 14); ctx.lineTo(cx - 12, platY + 14); ctx.stroke();
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.rect(cx - hw - 3, platY - 1, hw * 2 + 6, 5); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 1.8;
+  for (const dx of [-hw - 2, -hw / 2, 0, hw / 2, hw + 2]) { ctx.beginPath(); ctx.moveTo(cx + dx, platY - 1); ctx.lineTo(cx + dx, platY - 9); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(cx - hw - 3, platY - 9); ctx.lineTo(cx + hw + 3, platY - 9); ctx.stroke();
+  ctx.fillStyle = iron ? age.stone : age.woodDark; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.rect(cx - hw + 2, roofY, hw * 2 - 4, platY - 9 - roofY); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a100a'; ctx.fillRect(cx - 3, roofY + 3, 6, 6);
+  ctx.fillStyle = hexAlpha(age.flame, 0.55); ctx.fillRect(cx - 2, roofY + 4, 4, 4);
+  ctx.fillStyle = age.woodDark; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx - hw - 7, roofY); ctx.lineTo(cx, apexY); ctx.lineTo(cx + hw + 7, roofY); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,230,190,.18)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(cx - hw - 5, roofY - 1); ctx.lineTo(cx - 1, apexY + 2); ctx.stroke();
+  if (iron) { ctx.fillStyle = age.stone; ctx.fillRect(cx + 6, apexY + 8, 4, 10); drawSmoke(cx + 8, apexY + 6, now, 2, 'rgba(120,120,130,.3)'); }
+  const poleTop = apexY - 30;
+  ctx.strokeStyle = '#2a1c10'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx, apexY + 2); ctx.lineTo(cx, poleTop); ctx.stroke();
+  const wave = Math.sin(now / 300) * 5, wave2 = Math.sin(now / 300 + 1.3) * 3;
+  ctx.fillStyle = (side > 0 && progress.cosmeticFlag === 'gold') ? ART.flags.gold : (side > 0 ? ART.flags.player : ART.flags.enemy);
+  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, poleTop);
+  ctx.quadraticCurveTo(cx - 12, poleTop + 3 + wave2, cx - 24 - wave, poleTop + 6);
+  ctx.quadraticCurveTo(cx - 12, poleTop + 9 + wave2, cx, poleTop + 13);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+// Разрушенная крепость: обломки столбов башни, упавшие брёвна под углом,
+// груда камней, уцелевший кусок стены, дым из руин.
+function drawRuins(age, x0, x1, baseY, now) {
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 3.2;
+  for (const [px, h] of [[-31, 22], [-7, 14]]) { ctx.beginPath(); ctx.moveTo(px, baseY); ctx.lineTo(px + 2, baseY - h); ctx.stroke(); }
+  ctx.fillStyle = age.stone; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.2;
+  for (const [dx, r] of [[-14, 7], [8, 9], [26, 6], [-30, 5]]) { ctx.beginPath(); ctx.ellipse(dx, baseY - 2, r, r * 0.55, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  for (let i = 0; i < 5; i++) {
+    const lx = x0 + 6 + i * 17, ang = -0.25 - (i % 3) * 0.22;
+    ctx.save(); ctx.translate(lx, baseY - 2); ctx.rotate(ang);
+    ctx.fillStyle = i % 2 ? age.woodDark : age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.rect(0, -3, 26 + (i % 2) * 8, 6); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+  for (const [lx, h] of [[x1 - 10, 20], [x1 - 4, 26]]) {
+    ctx.beginPath(); ctx.moveTo(lx, baseY); ctx.lineTo(lx, baseY - h + 3); ctx.lineTo(lx + 3, baseY - h); ctx.lineTo(lx + 6, baseY - h + 4); ctx.lineTo(lx + 6, baseY); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  drawSmoke(-6, baseY - 12, now, 4, 'rgba(70,60,55,.4)');
+}
+// Крепость «под обложку» (раунд 14): деревянный частокол с заострёнными
+// брёвнами, ворота со стороны линии боя (юниты спавнятся на core.x±30 —
+// внутри арки, «выходят из ворот»), сторожевая башня с крышей и флагом,
+// факел, каменный холм-основание. Рисуется для side=+1 и зеркалится
+// ctx.scale(side, 1); хитбокс CORE_KEEP_NEAR/FAR (data.js) не меняется —
+// это координаты для расстановки башен, не рисунок. Материал по эпохе:
+// stone — сырые брёвна, bronze — брёвна с бронзовыми обручами и каменное
+// основание выше, iron — кладка с железными накладками и трубой.
+// Повреждения: <60% HP — обломанные брёвна и трещины, <30% — дым;
+// разрушено — упавшие брёвна, обломки башни, дым из руин.
 function drawCore(core, side, age) {
-  const x = core.x;
-  const baseY = ARENA.groundY;
   const alive = core.hp > 0;
   const hpFrac = core.maxHp > 0 ? Math.max(0, core.hp / core.maxHp) : 0;
-  const towerX0 = side > 0 ? CORE_KEEP_NEAR : -CORE_KEEP_FAR;
-  const towerX1 = side > 0 ? CORE_KEEP_FAR : -CORE_KEEP_NEAR;
-  const towerTop = alive ? -78 : -46; // разрушенное — обломанная низкая башня
-  ctx.save();
-  ctx.translate(x, baseY);
+  const now = performance.now();
+  const iron = age.id === 'iron', bronze = age.id === 'bronze';
   const flash = core.hitFlash > 0 ? core.hitFlash : 0;
   if (flash > 0) core.hitFlash = Math.max(0, flash - 0.06);
-
-  // фундамент — трапеция пошире у земли
-  ctx.fillStyle = age.coreDark;
-  ctx.beginPath();
-  ctx.moveTo(-22, 0); ctx.lineTo(side * 48, 0);
-  ctx.lineTo(side * 42, -12); ctx.lineTo(-18, -12);
-  ctx.closePath(); ctx.fill();
-
-  // задний опорный столб (анкер у линии) + мостик к башне
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
-  ctx.fillStyle = age.coreDark;
-  ctx.beginPath(); ctx.rect(-7, -66, 14, 56); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.rect(Math.min(0, towerX0), -70, Math.abs(towerX0 - 0) + 6, 10); ctx.fill(); ctx.stroke();
-
-  // основная башня
-  const bodyColor = flash > 0 ? `rgba(255,255,255,${flash})` : age.coreBody;
-  ctx.fillStyle = bodyColor;
-  ctx.beginPath(); ctx.rect(towerX0, towerTop, towerX1 - towerX0, -towerTop - 12); ctx.fill(); ctx.stroke();
-
-  // текстура по эпохе
   ctx.save();
-  ctx.beginPath(); ctx.rect(towerX0, towerTop, towerX1 - towerX0, -towerTop - 12); ctx.clip();
-  ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1.5;
-  if (age.id === 'stone') {
-    for (let ly = towerTop + 10; ly < -14; ly += 11) {
-      ctx.beginPath(); ctx.moveTo(towerX0, ly); ctx.lineTo(towerX1, ly); ctx.stroke();
-    }
-  } else if (age.id === 'bronze') {
-    for (let ly = towerTop + 8; ly < -12; ly += 10) {
-      ctx.beginPath(); ctx.moveTo(towerX0, ly); ctx.lineTo(towerX1, ly); ctx.stroke();
-      for (let lx = towerX0 + ((ly / 10) % 2 ? 0 : 7); lx < towerX1; lx += 14) {
-        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx, ly + 10); ctx.stroke();
-      }
-    }
-  } else {
-    for (let lx = towerX0 + 6; lx < towerX1; lx += 10) {
-      ctx.beginPath(); ctx.moveTo(lx, towerTop); ctx.lineTo(lx, -12); ctx.stroke();
-    }
-    ctx.fillStyle = age.coreAccent;
-    for (let ly = towerTop + 8; ly < -12; ly += 14) {
-      for (let lx = towerX0 + 6; lx < towerX1; lx += 10) { ctx.beginPath(); ctx.arc(lx, ly, 1.3, 0, Math.PI * 2); ctx.fill(); }
-    }
-  }
-  ctx.restore();
+  ctx.translate(core.x, ARENA.groundY);
+  ctx.scale(side, 1);
+  ctx.lineJoin = 'round';
 
-  // повреждения — трещины и дым при низком HP
-  if (alive && hpFrac < 0.6) {
-    ctx.strokeStyle = 'rgba(20,15,10,.55)'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo((towerX0 + towerX1) / 2 - 6, towerTop + 14);
-    ctx.lineTo((towerX0 + towerX1) / 2 + 4, towerTop + 30);
-    ctx.lineTo((towerX0 + towerX1) / 2 - 3, towerTop + 46);
-    ctx.stroke();
-  }
-  if (alive && hpFrac < 0.3) {
-    const t = performance.now() / 1000;
-    ctx.fillStyle = 'rgba(90,90,90,.35)';
-    for (let i = 0; i < 3; i++) {
-      const puff = (t * 0.4 + i * 0.33) % 1;
-      ctx.beginPath();
-      ctx.arc((towerX0 + towerX1) / 2 + Math.sin(t + i) * 6, towerTop - puff * 30, 4 + puff * 7, 0, Math.PI * 2);
-      ctx.globalAlpha = 1 - puff;
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-  }
+  const moundH = bronze ? 16 : iron ? 14 : 11;
+  const wallX0 = -40, wallX1 = 46, wallH = 54;
+  const gateX0 = 20, gateX1 = 42, gateH = 34;
+  const top = -moundH - wallH;
+
+  // каменный холм-основание с кладкой
+  ctx.fillStyle = age.stone; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-54, 0); ctx.lineTo(-46, -moundH); ctx.lineTo(56, -moundH); ctx.lineTo(62, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1;
+  for (let ly = -moundH + 5; ly < -1; ly += 5) { ctx.beginPath(); ctx.moveTo(-50, ly); ctx.lineTo(60, ly); ctx.stroke(); }
+  for (let lx = -44; lx < 58; lx += 11) { const o = ((lx / 11) | 0) % 2 ? 2.5 : 0; ctx.beginPath(); ctx.moveTo(lx, -moundH + o); ctx.lineTo(lx, -moundH + o + 5); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(255,235,200,.10)'; ctx.fillRect(-46, -moundH, 102, 2);
 
   if (alive) {
-    // зубцы либо навершие
-    drawBattlements(towerX0, towerX1, towerTop, age.coreDark, 3);
-
-    // факел/фонарь на углу башни, обращённом к линии боя
-    const torchX = side > 0 ? towerX1 - 4 : towerX0 + 4;
-    ctx.strokeStyle = '#3a2f22'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(torchX, towerTop); ctx.lineTo(torchX, towerTop - 10); ctx.stroke();
-    const flick = 3 + Math.sin(performance.now() / 90) * 1.2 + Math.random() * 1.2;
-    const flameGrad = ctx.createRadialGradient(torchX, towerTop - 12, 0, torchX, towerTop - 12, flick + 2);
-    flameGrad.addColorStop(0, '#fff7d6');
-    flameGrad.addColorStop(0.5, age.flame);
-    flameGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    drawWatchtower(age, -19, -moundH, top - 26, side, now, iron);
+    if (iron) drawMasonryWall(age, wallX0, wallX1, -moundH, top, hpFrac);
+    else drawPalisade(age, wallX0, wallX1, -moundH, top, hpFrac, bronze);
+    // ворота — тёмная арка со стороны линии боя, перемычка сверху
+    const gcx = (gateX0 + gateX1) / 2, gcy = -moundH - gateH + 11;
+    ctx.fillStyle = '#1a100a';
+    ctx.beginPath(); ctx.moveTo(gateX0, -moundH); ctx.lineTo(gateX0, gcy); ctx.arc(gcx, gcy, 11, Math.PI, 0); ctx.lineTo(gateX1, -moundH); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,220,170,.18)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(gateX0 + 1, -moundH); ctx.lineTo(gateX0 + 1, gcy); ctx.arc(gcx, gcy, 10, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = age.woodDark; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.rect(gateX0 - 3, -moundH - gateH - 5, gateX1 - gateX0 + 6, 5); ctx.fill(); ctx.stroke();
+    // факел у ворот
+    const torchX = wallX1 - 3, torchY = top - 2;
+    ctx.strokeStyle = '#2a1c10'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(torchX, torchY + 6); ctx.lineTo(torchX, torchY - 8); ctx.stroke();
+    const flick = 3 + Math.sin(now / 90) * 1.2 + Math.random() * 1.2;
+    const flameGrad = ctx.createRadialGradient(torchX, torchY - 11, 0, torchX, torchY - 11, flick + 4);
+    flameGrad.addColorStop(0, '#fff7d6'); flameGrad.addColorStop(0.45, age.flame); flameGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = flameGrad;
-    ctx.beginPath(); ctx.arc(torchX, towerTop - 12, flick + 2, 0, Math.PI * 2); ctx.fill();
-
-    // Флаг команды на башне — древко поднято выше зубцов (drawBattlements
-    // рисует их до towerTop-11), иначе флаг визуально тонет в силуэте
-    // башни вместо того, чтобы развеваться над крышей (баг-репорт, раунд 7;
-    // раунд 8 — основатель попросил поднять ещё выше, было towerTop-34).
-    const poleX = (towerX0 + towerX1) / 2;
-    const poleTop = towerTop - 48;
-    ctx.strokeStyle = '#2a221a'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(poleX, towerTop - 10); ctx.lineTo(poleX, poleTop); ctx.stroke();
-    const flagWave = Math.sin(performance.now() / 300) * 6;
-    // Косметика "золотой флаг" из магазина — только на своей крепости.
-    ctx.fillStyle = (side > 0 && progress.cosmeticFlag === 'gold') ? '#f2c94c' : (side > 0 ? '#5fd15f' : '#e05c5c');
-    ctx.beginPath();
-    ctx.moveTo(poleX, poleTop);
-    ctx.lineTo(poleX + side * 22 + flagWave, poleTop + 6);
-    ctx.lineTo(poleX, poleTop + 12);
-    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(torchX, torchY - 11, flick + 4, 0, Math.PI * 2); ctx.fill();
+    // вспышка попадания по стене
+    if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${flash * 0.55})`; ctx.fillRect(wallX0, top - 8, wallX1 - wallX0, wallH + 8); }
+    if (hpFrac < 0.3) drawSmoke(-19, top - 20, now, 3, 'rgba(70,60,55,.4)');
   } else {
-    // руины у подножия
-    ctx.fillStyle = age.coreDark;
-    for (const [dx, r] of [[-14, 6], [6, 8], [20, 5]]) {
-      ctx.beginPath(); ctx.ellipse(dx, -2, r, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
-    }
+    drawRuins(age, wallX0, wallX1, -moundH, now);
   }
 
-  // Глиф неуязвимости (баф вражеской базы при 20% HP, раунд 5) — вращающийся
-  // светящийся купол поверх башни, как глиф в Dota 2 (см. КОНЦЕПТ_ГДД.md).
+  // Глиф неуязвимости (баф вражеской базы, раунд 5) — светящийся купол над
+  // крепостью, как глиф в Dota 2 (КОНЦЕПТ_ГДД.md). Голубой оставлен
+  // намеренно — сигнал «не бей»; пунктир заменён мягким сплошным кольцом.
+  // Радиус растёт вместе с крепостью (раньше 34px при башне 30px шириной,
+  // теперь 56px при стене 86px) — купол по-прежнему накрывает постройку.
   if (alive && core.invulnerable > 0) {
-    const midY = (towerTop - 12) / 2;
-    // Правка баланса (решение основателя): визуальный радиус глифа +50%
-    // (0.75 -> 1.125), только внешний вид — длительность неуязвимости
-    // (4с) не менялась.
-    const r = (towerX1 - towerX0) * 1.125;
-    const spin = performance.now() / 400;
+    const cx = 3, cy = top / 2 - 6, r = 56;
     ctx.save();
-    ctx.globalAlpha = 0.55 + Math.sin(performance.now() / 150) * 0.15;
-    const glyphGrad = ctx.createRadialGradient((towerX0 + towerX1) / 2, midY, 0, (towerX0 + towerX1) / 2, midY, r);
+    ctx.globalAlpha = 0.55 + Math.sin(now / 150) * 0.15;
+    const glyphGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
     glyphGrad.addColorStop(0, 'rgba(140,220,255,.05)');
     glyphGrad.addColorStop(0.8, 'rgba(120,200,255,.35)');
     glyphGrad.addColorStop(1, 'rgba(120,200,255,0)');
     ctx.fillStyle = glyphGrad;
-    ctx.beginPath(); ctx.arc((towerX0 + towerX1) / 2, midY, r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(180,230,255,.85)'; ctx.lineWidth = 2;
-    ctx.setLineDash([6, 5]); ctx.lineDashOffset = -spin * 10;
-    ctx.beginPath(); ctx.arc((towerX0 + towerX1) / 2, midY, r * 0.9, 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(220,245,255,.3)'; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.9, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(180,230,255,.75)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.9, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
   ctx.restore();
