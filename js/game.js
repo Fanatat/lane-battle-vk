@@ -973,9 +973,27 @@ DOM.btnRetry.addEventListener('click', () => startMission(match.missionIndex));
 // Магазин доступен сразу с экрана итога миссии (раунд 5, запрос
 // основателя), не только из главного меню.
 DOM.btnShopFromResult.addEventListener('click', () => { SFX.click(); renderShop(); showScreen('shop'); });
+// Межуровневая реклама (решение основателя 23.09.2026): по «Далее», не чаще
+// раза в 3 минуты. Отсчёт идёт от загрузки игры и сбрасывается любым
+// показанным роликом, включая рекламу за награду.
+const INTERSTITIAL_COOLDOWN_MS = 180000;
+const AD_RECHECK_INTERVAL_MS = 4000;
+const AD_RECHECK_MAX_ATTEMPTS = 8;
+let lastAdShownAt = Date.now();
+let interstitialInFlight = false;
 DOM.btnNext.addEventListener('click', () => {
+  if (interstitialInFlight) return;
   const nextIdx = match.missionIndex + 1;
-  if (nextIdx < MISSIONS.length) startMission(nextIdx); else showScreen('menu');
+  const goNext = () => { if (nextIdx < MISSIONS.length) startMission(nextIdx); else showScreen('menu'); };
+  if (!PLATFORM.supportsInterstitial() || Date.now() - lastAdShownAt < INTERSTITIAL_COOLDOWN_MS) { goNext(); return; }
+  interstitialInFlight = true;
+  DOM.btnNext.disabled = true;
+  PLATFORM.showInterstitial().then((shown) => {
+    if (shown) lastAdShownAt = Date.now();
+    interstitialInFlight = false;
+    DOM.btnNext.disabled = false;
+    goNext();
+  });
 });
 
 function togglePause() {
@@ -1763,9 +1781,11 @@ function endMatch(result) {
     DOM.resultText.textContent = I18N.t('result.defeatText', { cause: causeText });
     DOM.btnNext.classList.add('hidden');
     DOM.btnRetry.classList.remove('hidden'); // единственный экран, где остаётся
-    DOM.resultAdRow.classList.add('hidden');
-    DOM.resultAdRow.innerHTML = '';
+    // Решение основателя 23.09.2026: реклама за награду и после поражения —
+    // та же x2 за миссию, помогает купить улучшения к следующей попытке.
+    renderResultAdRow(rewardAmount, false);
   }
+  if (result === 'win') PLATFORM.preloadInterstitial();
   setTimeout(() => {
     showScreen('result');
     // Заметный разовый всплеск конфетти у своей базы на победу — чтобы
@@ -1809,6 +1829,7 @@ function renderResultAdRow(earnedDiamonds, isChapterFinal) {
         btn.textContent = I18N.t('result.adLoading');
         PLATFORM.showRewardedVideo().then((rewarded) => {
           if (rewarded) {
+            lastAdShownAt = Date.now();
             onGranted();
             saveProgress(progress);
             btn.textContent = I18N.t('result.adGranted', { amount });
@@ -1826,20 +1847,30 @@ function renderResultAdRow(earnedDiamonds, isChapterFinal) {
     // (VK, локальный тест) — кнопка не должна звать нажать впустую. Яндекс
     // такого API не публикует (см. platform.js) — там сохранено прежнее
     // поведение: кнопка сразу кликабельна, недоступность — по факту клика.
+    // null — площадка (Яндекс/CrazyGames) проверки не даёт: кнопка сразу
+    // кликабельна. false — ролика пока нет: переспрашиваем, пока игрок на
+    // экране итога, иначе одна неудачная проверка гасила кнопку насовсем.
     if (PLATFORM.kind() === 'yandex') {
       wireClick();
     } else {
       btn.disabled = true;
-      PLATFORM.checkRewardedAvailable().then((available) => {
-        if (available) {
-          btn.disabled = false;
-          wireClick();
-        } else {
-          btn.disabled = true;
+      let attempts = 0;
+      const check = () => {
+        PLATFORM.checkRewardedAvailable().then((available) => {
+          if (!btn.isConnected) return;
+          if (available !== false) {
+            btn.disabled = false;
+            btn.classList.remove('unavailable');
+            setLabel();
+            wireClick();
+            return;
+          }
           btn.classList.add('unavailable');
           btn.textContent = I18N.t('result.adUnavailableBtn');
-        }
-      });
+          if (++attempts < AD_RECHECK_MAX_ATTEMPTS) setTimeout(check, AD_RECHECK_INTERVAL_MS);
+        });
+      };
+      check();
     }
     return btn;
   }

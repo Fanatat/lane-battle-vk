@@ -380,17 +380,47 @@ const PLATFORM = (() => {
       });
     });
   }
+  // use_waterfall — официальное поле vk-bridge (snake_case, см. типы пакета
+  // ShowNativeAdsRequest/CheckNativeAdsRequest): при нехватке rewarded-роликов
+  // площадка подставляет interstitial вместо отказа.
+  const VK_REWARD_PARAMS = { ad_format: 'reward', use_waterfall: true };
+  const VK_AD_TIMEOUT_MS = 40000;
   function showVkRewarded() {
     return new Promise((resolve) => {
       if (!vkBridge) { resolve(false); return; }
       pauseHook();
-      vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'reward' })
-        .then((data) => {
-          if (!data || !data.result) { resumeHook(); resolve(false); return; }
-          return vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'reward' })
-            .then((res) => { resumeHook(); resolve(!!(res && res.result)); });
-        })
+      withTimeout(vkBridge.send('VKWebAppShowNativeAds', VK_REWARD_PARAMS), VK_AD_TIMEOUT_MS)
+        .then((res) => { resumeHook(); resolve(!!(res && res.result)); })
         .catch(() => { resumeHook(); resolve(false); });
+    });
+  }
+
+  // ---- межуровневая реклама (VK/Яндекс; на CrazyGames midgame отключён
+  // решением основателя, локально — no-op) --------------------------------
+  const INTERSTITIAL_TIMEOUT_MS = 15000;
+  function showVkInterstitial() {
+    if (!vkBridge) return Promise.resolve(false);
+    pauseHook();
+    return withTimeout(vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'interstitial' }), INTERSTITIAL_TIMEOUT_MS)
+      .then((res) => !!(res && res.result))
+      .catch(() => false)
+      .then((shown) => { resumeHook(); return shown; });
+  }
+  function showYandexInterstitial() {
+    return new Promise((resolve) => {
+      if (!ysdk || !ysdk.adv) { resolve(false); return; }
+      let settled = false;
+      const finish = (shown) => { if (settled) return; settled = true; resumeHook(); resolve(shown); };
+      // Если SDK не ответил ни одним колбэком — игра не должна застрять.
+      const guard = setTimeout(() => finish(false), INTERSTITIAL_TIMEOUT_MS * 4);
+      ysdk.adv.showFullscreenAdv({
+        callbacks: {
+          onOpen: () => { clearTimeout(guard); pauseHook(); },
+          onClose: (wasShown) => { clearTimeout(guard); finish(!!wasShown); },
+          onError: () => { clearTimeout(guard); finish(false); },
+          onOffline: () => { clearTimeout(guard); finish(false); },
+        },
+      });
     });
   }
   // По семантике совпадает с showYandexRewarded()/showVkRewarded() выше —
@@ -430,9 +460,16 @@ const PLATFORM = (() => {
   // «оставить как было»: кнопка сразу кликабельна, ошибка — по факту клика.
   function checkVkRewardedAvailable() {
     if (!vkBridge) return Promise.resolve(false);
-    return vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'reward' })
+    return withTimeout(vkBridge.send('VKWebAppCheckNativeAds', VK_REWARD_PARAMS), STORAGE_TIMEOUT_MS)
       .then((data) => !!(data && data.result))
       .catch(() => false);
+  }
+  // Проверка у VK заодно подгружает ролик — зовём заранее, на экране итога,
+  // чтобы к нажатию «Далее» межуровневая реклама была готова.
+  function preloadVkInterstitial() {
+    if (!vkBridge) return;
+    withTimeout(vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'interstitial' }), STORAGE_TIMEOUT_MS)
+      .catch(() => {});
   }
 
   // ---- ИНАП (только Яндекс — на VK/локально DLC покупается за
@@ -644,6 +681,15 @@ const PLATFORM = (() => {
       if (kind === 'yandex' || kind === 'crazygames') return Promise.resolve(null);
       return Promise.resolve(true); // локальный тест — заглушка всегда «готова»
     },
+    // Всегда резолвится (true — ролик показан), не бросает: вызывающий код
+    // продолжает переход между миссиями в любом исходе.
+    showInterstitial() {
+      if (kind === 'vk') return showVkInterstitial();
+      if (kind === 'yandex') return showYandexInterstitial();
+      return Promise.resolve(false);
+    },
+    supportsInterstitial() { return kind === 'vk' || kind === 'yandex'; },
+    preloadInterstitial() { if (kind === 'vk') preloadVkInterstitial(); },
     // Лидерборд (только CrazyGames — см. методичку §9, ГДД «Допущения»).
     // Что именно передаётся как `score` — решает вызывающий код (game.js),
     // этот слой только шифрует и отправляет.
