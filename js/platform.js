@@ -155,6 +155,50 @@ const PLATFORM = (() => {
     vkBridge = window.vkBridge;
     await vkBridge.send('VKWebAppInit');
     kind = 'vk';
+    startVkSideBanner();
+  }
+
+  // Постоянный баннер справа — только ВК на ПК (решение основателя 24.09.2026,
+  // отменяет прежнее «обойтись без баннера»: на ПК место сбоку есть).
+  // Вертикальная ориентация доступна только в веб-версии на десктопе, поэтому
+  // на мобильных и в приложениях ВК баннер не запрашивается вовсе.
+  // layout_type 'resize' — ВК сужает iframe, игра переразмечается по обычному
+  // window.resize и под баннер не заходит. Площадка сама ротирует креативы;
+  // нет показа (нет заполнения, сеть) — переспрашиваем раз в минуту. Закрыл
+  // игрок — больше не показываем до перезапуска.
+  const VK_SIDE_BANNER_PARAMS = {
+    banner_location: 'top',
+    banner_align: 'right',
+    orientation: 'vertical',
+    layout_type: 'resize',
+  };
+  const VK_SIDE_BANNER_TIMEOUT_MS = 15000;
+  const VK_SIDE_BANNER_RETRY_MS = 60000;
+  // Показ фиксируем и по событиям: ответ мог прийти уже после нашего
+  // таймаута — повторный ShowBannerAd поверх живого баннера не нужен.
+  let vkSideBannerShown = false;
+  let vkSideBannerClosed = false;
+  function isVkDesktopWeb() {
+    const vkPlatform = new URLSearchParams(location.search).get('vk_platform') || '';
+    return vkPlatform.startsWith('desktop_web');
+  }
+  function startVkSideBanner() {
+    if (!isVkDesktopWeb()) return;
+    vkBridge.subscribe((e) => {
+      const type = e.detail && e.detail.type;
+      if (type === 'VKWebAppShowBannerAdResult' || type === 'VKWebAppBannerAdUpdated') vkSideBannerShown = true;
+      if (type === 'VKWebAppBannerAdClosedByUser') vkSideBannerClosed = true;
+    });
+    showVkSideBanner();
+  }
+  function showVkSideBanner() {
+    if (vkSideBannerShown || vkSideBannerClosed) return;
+    withTimeout(vkBridge.send('VKWebAppShowBannerAd', VK_SIDE_BANNER_PARAMS), VK_SIDE_BANNER_TIMEOUT_MS)
+      .then((res) => {
+        if (!(res && res.result)) throw new Error('banner-not-shown');
+        vkSideBannerShown = true;
+      })
+      .catch(() => { setTimeout(showVkSideBanner, VK_SIDE_BANNER_RETRY_MS); });
   }
 
   // CrazyGames (методичка МЕТОДИЧКА_ВЫВОД_НА_CRAZYGAMES.md, §1-§2). В
