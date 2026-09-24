@@ -86,14 +86,10 @@ const BOOT = (() => {
   mark('скрипты игры начали выполняться');
   document.addEventListener('DOMContentLoaded', () => mark('DOMContentLoaded'));
   window.addEventListener('load', () => mark('window load'));
-  // Шрифты Google грузятся в фоне (media=print → all по onload, index.html).
-  const fontsLink = document.querySelector('link[href*="fonts.googleapis.com"][media]');
-  if (fontsLink) {
-    if (fontsLink.media === 'all') mark('шрифты Google загружены (до скриптов)');
-    else {
-      fontsLink.addEventListener('load', () => mark('шрифты Google загружены'));
-      fontsLink.addEventListener('error', () => mark('шрифты Google: ошибка загрузки'));
-    }
+  // Шрифты локальные (assets/fonts/), браузер качает их при первом
+  // использовании — фиксируем момент, когда все нужные уже готовы.
+  if (document.fonts && document.fonts.ready) {
+    document.addEventListener('DOMContentLoaded', () => document.fonts.ready.then(() => mark('шрифты готовы')));
   }
 
   let firstScreenSeen = false;
