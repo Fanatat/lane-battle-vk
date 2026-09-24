@@ -2663,7 +2663,9 @@ PLATFORM.ready.then(async () => {
   // ~5с, не зависнет. Повторное применение темы/звука — на случай, если
   // слияние с облаком изменило их по сравнению с тем, что применилось
   // синхронно на строке ~88.
+  BOOT.mark('чтение облачного сейва…');
   progress = await syncProgress();
+  BOOT.mark('облачный сейв прочитан');
   applyTheme();
   SFX.setMuted(!!progress.muted);
   MUSIC.setMusicMuted(!!progress.musicMuted);
@@ -2688,4 +2690,5 @@ PLATFORM.ready.then(async () => {
   } else {
     showScreen('menu');
   }
+  BOOT.firstScreen();
 });

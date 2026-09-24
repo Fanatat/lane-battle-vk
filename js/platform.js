@@ -33,7 +33,10 @@ window.GAME_PLATFORM = window.GAME_PLATFORM || 'auto';
 // хранилище" и заново отклоняет билд (найдено 2026-09-14 на этой самой
 // правке — см. yandex_report/10_1.png, отдельная итерация отчёта).
 const YANDEX_SDK_URL = '/sdk.js';
-const VK_BRIDGE_URL = 'https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js';
+// VK Bridge — локальная копия @vkontakte/vk-bridge@3.0.2 (MIT), не unpkg
+// (24.09.2026, долгий старт на ВК): раньше грузился с unpkg без версии —
+// лишний редирект и сторонний CDN прямо на пути к VKWebAppInit.
+const VK_BRIDGE_URL = 'js/vendor/vk-bridge.min.js';
 
 // ID товаров ИНАП в консоли Яндекс.Игр. ДОЛЖНЫ дословно совпадать с тем, что
 // заведено в консоли основателем — это ручное действие вне кода (см. отчёт
@@ -152,8 +155,10 @@ const PLATFORM = (() => {
 
   async function initVk() {
     await loadScript(VK_BRIDGE_URL);
+    BOOT.mark('VK Bridge загружен');
     vkBridge = window.vkBridge;
     await vkBridge.send('VKWebAppInit');
+    BOOT.mark('VKWebAppInit — ответ ВК');
     kind = 'vk';
     startVkSideBanner();
   }
@@ -426,9 +431,11 @@ const PLATFORM = (() => {
         kind = 'none';
       }
     } catch (e) {
+      BOOT.mark('площадка не ответила: ' + (e && e.message));
       kind = 'none';
     }
     applyDetectedLanguage();
+    BOOT.mark('площадка определена: ' + kind);
     readyResolve();
     // paymentsReady резолвится ВНУТРИ initYandexPaymentsAndPlayer() для
     // Яндекса (после реальной попытки загрузки) — здесь нужно резолвнуть

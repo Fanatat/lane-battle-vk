@@ -6,7 +6,10 @@
 <title>Две крепости</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<!-- Шрифты не блокируют первую отрисовку (24.09.2026, долгий старт на ВК):
+     media=print грузится в фоне, onload включает его; до загрузки — системный шрифт. -->
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Lilita+One&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Lilita+One&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -191,6 +194,7 @@
 </div>
 
 <script>window.GAME_PLATFORM='vk';</script>
+<script src="js/diag.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/data.js"></script>
 <script src="js/save.js"></script>

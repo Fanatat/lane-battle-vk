@@ -1,0 +1,114 @@
+// Диагностика старта (24.09.2026, жалоба основателя: на ВК игра открывается
+// ~30 с). Грузится первым из скриптов игры. Собирает метки этапов запуска
+// (BOOT.mark из platform.js/game.js) и тайминги всех загруженных файлов
+// (Resource Timing), время считается от начала навигации iframe.
+//
+// Отчёт всегда уходит в консоль ('[boot]') при показе первого экрана и
+// повторно через 20 с (к этому моменту догружается музыка). На экране —
+// только по запросу: #debug в адресе (у ВК: vk.com/appXXXX#debug — хэш
+// передаётся в iframe игры) или ?debug=1. Из консоли — BOOT.print().
+'use strict';
+
+const BOOT = (() => {
+  const marks = [];
+  let enabled = false;
+  try {
+    enabled = /(^|[#&])debug\b/.test(location.hash) || new URLSearchParams(location.search).has('debug');
+  } catch (e) { /* без диагностики на экране */ }
+  let panel = null;
+
+  const ms = (v) => (v == null || !isFinite(v) ? '—' : Math.round(v) + ' мс');
+  function shortName(url) {
+    try {
+      const u = new URL(url, location.href);
+      const file = u.pathname.split('/').filter(Boolean).pop() || '/';
+      return (u.host === location.host ? '' : u.host + ' … ') + decodeURIComponent(file);
+    } catch (e) { return String(url).slice(-50); }
+  }
+
+  function report() {
+    const lines = [];
+    const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    lines.push('Страница: ' + location.host + location.pathname);
+    lines.push('Сеть: ' + ((navigator.connection && navigator.connection.effectiveType) || '?') +
+      ', экран ' + innerWidth + '×' + innerHeight);
+    if (nav) {
+      lines.push('');
+      lines.push('HTML: первый байт ' + ms(nav.responseStart) + ', загружен ' + ms(nav.responseEnd));
+      lines.push('DOM готов ' + ms(nav.domContentLoadedEventEnd || null) + ', всё загружено (load) ' + ms(nav.loadEventEnd || null));
+    }
+    lines.push('');
+    lines.push('Этапы:');
+    marks.forEach(([name, t]) => lines.push('  ' + String(Math.round(t)).padStart(6) + ' мс  ' + name));
+    const res = (performance.getEntriesByType ? performance.getEntriesByType('resource') : [])
+      .slice()
+      .sort((a, b) => b.duration - a.duration)
+      .slice(0, 14);
+    if (res.length) {
+      lines.push('');
+      lines.push('Самые долгие файлы (начало → конец, длительность, КБ):');
+      res.forEach((r) => {
+        const kb = r.transferSize ? Math.round(r.transferSize / 1024) + ' КБ' : (r.encodedBodySize ? Math.round(r.encodedBodySize / 1024) + ' КБ' : '?');
+        lines.push('  ' + String(Math.round(r.startTime)).padStart(6) + ' → ' + String(Math.round(r.responseEnd)).padStart(6) +
+          '  ' + String(Math.round(r.duration)).padStart(6) + ' мс  ' + kb.padStart(7) + '  ' + shortName(r.name));
+      });
+    }
+    return lines.join('\n');
+  }
+
+  function render() {
+    if (!enabled || !document.body) return;
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.style.cssText = 'position:fixed;left:6px;top:6px;z-index:100000;max-width:min(96vw,760px);max-height:90vh;' +
+        'overflow:auto;background:rgba(0,0,0,.86);color:#b8ffb0;font:11px/1.35 monospace;padding:8px 10px;' +
+        'border:1px solid #4a4;border-radius:6px;white-space:pre;user-select:text;-webkit-user-select:text;';
+      const close = document.createElement('button');
+      close.textContent = '×';
+      close.style.cssText = 'position:sticky;float:right;top:0;font:16px monospace;background:#333;color:#fff;border:0;cursor:pointer;';
+      close.onclick = () => { panel.remove(); panel = null; enabled = false; };
+      panel.appendChild(close);
+      panel.appendChild(document.createElement('div'));
+      document.body.appendChild(panel);
+    }
+    panel.lastChild.textContent = '[boot] диагностика старта\n\n' + report();
+  }
+
+  function mark(name) {
+    marks.push([name, performance.now()]);
+    render();
+  }
+  function print() {
+    console.info('[boot]\n' + report());
+    render();
+  }
+
+  mark('скрипты игры начали выполняться');
+  document.addEventListener('DOMContentLoaded', () => mark('DOMContentLoaded'));
+  window.addEventListener('load', () => mark('window load'));
+  // Шрифты Google грузятся в фоне (media=print → all по onload, index.html).
+  const fontsLink = document.querySelector('link[href*="fonts.googleapis.com"][media]');
+  if (fontsLink) {
+    if (fontsLink.media === 'all') mark('шрифты Google загружены (до скриптов)');
+    else {
+      fontsLink.addEventListener('load', () => mark('шрифты Google загружены'));
+      fontsLink.addEventListener('error', () => mark('шрифты Google: ошибка загрузки'));
+    }
+  }
+
+  let firstScreenSeen = false;
+  return {
+    mark,
+    print,
+    report,
+    // Зовётся из game.js при показе первого экрана — отчёт в консоль сразу
+    // и повторно через 20 с, когда догрузится музыка.
+    firstScreen() {
+      if (firstScreenSeen) return;
+      firstScreenSeen = true;
+      mark('ПЕРВЫЙ ЭКРАН ПОКАЗАН');
+      print();
+      setTimeout(print, 20000);
+    },
+  };
+})();
