@@ -167,21 +167,27 @@ const PLATFORM = (() => {
   // отменяет прежнее «обойтись без баннера»: на ПК место сбоку есть).
   // На мобильных ВК вертикального баннера нет — там баннер не запрашивается.
   //
-  // Параметры — БЕЗ banner_location (24.09.2026, первая версия с
-  // banner_location:'top' на живом ВК баннер не показала). Рабочий набор
-  // взят у Нонограммы (game_studio_2/game2, adapters/vk_bridge.js), где
-  // вертикальный баннер справа на ПК реально показывался; дока ВК для
-  // десктопа даёт тот же набор с 'overlay'. 'resize' вместо 'overlay' —
-  // чтобы баннер не лёг поверх поля (шрам Нонограммы, ТЗ №10).
+  // Параметры — строго по dev.vk.com (VKWebAppShowBannerAd + «Баннерная
+  // реклама в играх», таблица «Десктопная версия сайта → Вертикальный
+  // рекламный баннер справа»), сверено 24.09.2026:
+  //   • banner_align работает ТОЛЬКО при layout_type:'overlay'; при
+  //     'resize' он «не используется» — ВК ставит обычный баннер снизу/сверху
+  //     на всю ширину, а не справа;
+  //   • 'overlay' работает ТОЛЬКО при banner_location:'bottom';
+  //   • orientation:'vertical' — только для десктопной версии сайта.
+  // Обе прежние попытки (resize+top, затем resize без location) нарушали
+  // первое правило — справа баннера не было.
   //
-  // Кто освобождает место — определяем по факту, не по запросу (шрам
-  // Нонограммы, ТЗ №11: двойной резерв даёт мёртвую зону): сузил ВК окно
-  // на ширину баннера — игра ничего не добавляет; не сузил — игра сама
-  // отступает справа на banner_width (CSS-переменная --vk-banner-reserve,
-  // style.css). Креативы ротирует площадка; нет показа — повтор раз в
-  // минуту; закрыл игрок — не показываем до перезапуска.
+  // 'overlay' кладёт баннер поверх игры («сдвиг контента разработчик
+  // делает сам») — поэтому игра отступает справа на banner_width
+  // (CSS-переменная --vk-banner-reserve, style.css). Кто освобождает место —
+  // всё равно проверяем по факту (шрам Нонограммы, ТЗ №11: двойной резерв
+  // даёт мёртвую зону): если ВК всё же сузил окно — игра не добавляет своё.
+  // Креативы ротирует площадка; нет показа — повтор раз в минуту; закрыл
+  // игрок — не показываем до перезапуска.
   const VK_SIDE_BANNER_PARAMS = {
-    layout_type: 'resize',
+    banner_location: 'bottom',
+    layout_type: 'overlay',
     banner_align: 'right',
     orientation: 'vertical',
   };
@@ -224,7 +230,10 @@ const PLATFORM = (() => {
     setTimeout(applyVkBannerReserve, VK_SIDE_BANNER_SETTLE_MS);
   }
   function startVkSideBanner() {
-    if (!isVkDesktop()) return;
+    if (!isVkDesktop()) {
+      BOOT.mark('баннер: не ПК (vk_platform=' + (new URLSearchParams(location.search).get('vk_platform') || '—') + ')');
+      return;
+    }
     vkBridge.subscribe((e) => {
       const type = e.detail && e.detail.type;
       if (type === 'VKWebAppShowBannerAdResult' || type === 'VKWebAppBannerAdUpdated') onVkBannerShown(e.detail.data);
@@ -241,14 +250,18 @@ const PLATFORM = (() => {
   function showVkSideBanner() {
     if (vkSideBannerShown || vkSideBannerClosed) return;
     vkWidthBeforeBanner = window.innerWidth;
+    BOOT.mark('баннер: запрос, окно ' + window.innerWidth + 'px');
     withTimeout(vkBridge.send('VKWebAppShowBannerAd', VK_SIDE_BANNER_PARAMS), VK_SIDE_BANNER_TIMEOUT_MS)
       .then((res) => {
+        BOOT.mark('баннер: ответ ' + JSON.stringify(res));
         if (!(res && res.result)) throw new Error('banner-not-shown');
         onVkBannerShown(res);
       })
       .catch((err) => {
         let detail;
         try { detail = JSON.stringify(err); } catch (e) { detail = String(err); }
+        if (detail === '{}' && err && err.message) detail = err.message;
+        BOOT.mark('баннер: ошибка ' + detail);
         console.warn('[platform] VK banner не показан, повтор через минуту:', detail);
         setTimeout(showVkSideBanner, VK_SIDE_BANNER_RETRY_MS);
       });

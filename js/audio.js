@@ -1,7 +1,25 @@
-// Все SFX — синтез через WebAudio, без внешних сэмплов (см. ГДД, «Аудио»).
+// SFX — записанные сэмплы (CC0: Kenney.nl, OpenGameArt), 24.09.2026.
+// Прежний синтез осцилляторами (square/sawtooth + шум) основатель назвал
+// «режет уши» — заменён целиком, API объекта SFX прежний. Источники и
+// лицензии — tools/SFX_ИСТОЧНИКИ.md, подготовка файлов —
+// tools/make_sfx.py.
 'use strict';
 
 const SFX = (() => {
+  // Банк: имя -> число вариантов (assets/audio/sfx/<имя>_<n>.mp3). Варианты
+  // чередуются случайно, без повтора подряд, плюс лёгкий разброс высоты —
+  // сотня одинаковых ударов за бой не звучит «пулемётом».
+  const BANK = {
+    hit_melee: 5, hit_spear: 4, hit_heavy: 5, hit_hero: 3, hit_hero_special: 2,
+    hit_ranged: 5, shoot: 4, death: 5, spawn: 4, deny: 2, upgrade: 1, coins: 1,
+    mine: 4, swing: 3, bell: 1, click: 2, core_hit: 5,
+  };
+  const SFX_DIR = 'assets/audio/sfx/';
+  // В большой битве (45+ юнитов) удары сыплются десятками в секунду: без
+  // потолка голосов и минимального шага между одинаковыми звуками получается
+  // каша. Лишнее просто не играет — слышно всё равно одно и то же событие.
+  const MAX_VOICES = 14;
+
   let ctx = null;
   let master = null;
   let muted = false;
@@ -10,60 +28,73 @@ const SFX = (() => {
   // — независимый флаг, не пишется в progress/save.js (эфемерное состояние
   // площадки, не выбор игрока).
   let platformMuted = false;
+  const buffers = {}; // имя -> [AudioBuffer]
+  const lastIdx = {};
+  const lastAt = {};
+  let voices = 0;
+  let loadStarted = false;
 
   function ensure() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // Мягкий компрессор на выходе — пачка одновременных ударов не даёт
+      // пиков, громкость ровная.
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -18;
+      comp.knee.value = 12;
+      comp.ratio.value = 4;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.15;
       master = ctx.createGain();
-      master.gain.value = 0.5;
-      master.connect(ctx.destination);
+      master.gain.value = 0.8;
+      master.connect(comp).connect(ctx.destination);
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     return ctx;
   }
 
-  function env(gainNode, t0, attack, hold, release, peak) {
-    const g = gainNode.gain;
-    g.cancelScheduledValues(t0);
-    g.setValueAtTime(0.0001, t0);
-    g.exponentialRampToValueAtTime(peak, t0 + attack);
-    g.setValueAtTime(peak, t0 + attack + hold);
-    g.exponentialRampToValueAtTime(0.0001, t0 + attack + hold + release);
+  // Загрузка ~390 КБ после показа первого экрана, не блокирует старт; пока
+  // файл не пришёл, его звук просто пропускается.
+  function preload() {
+    if (loadStarted) return;
+    loadStarted = true;
+    const c = ensure();
+    Object.keys(BANK).forEach((name) => {
+      buffers[name] = [];
+      for (let i = 1; i <= BANK[name]; i++) {
+        fetch(SFX_DIR + name + '_' + i + '.mp3')
+          .then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+          .then((data) => new Promise((res, rej) => c.decodeAudioData(data, res, rej)))
+          .then((buf) => { buffers[name].push(buf); })
+          .catch((e) => console.warn('[sfx] не загружен', name + '_' + i, e));
+      }
+    });
   }
 
-  function tone({ freq = 440, freq2 = null, dur = 0.15, type = 'sine', peak = 0.5, delay = 0 }) {
+  // vol — громкость события (0..1), rate — высота, delay — сдвиг в секундах,
+  // gap — минимальный шаг между одинаковыми звуками.
+  function play(name, { vol = 0.5, rate = 1, delay = 0, gap = 0 } = {}) {
     if (muted || platformMuted) return;
     const c = ensure();
-    const t0 = c.currentTime + delay;
-    const osc = c.createOscillator();
-    const gain = c.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (freq2 !== null) osc.frequency.exponentialRampToValueAtTime(freq2, t0 + dur);
-    env(gain, t0, 0.005, dur * 0.3, dur * 0.7, peak);
-    osc.connect(gain).connect(master);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
-  }
-
-  function noiseBurst({ dur = 0.12, peak = 0.4, filterFreq = 1200, delay = 0 }) {
-    if (muted || platformMuted) return;
-    const c = ensure();
-    const t0 = c.currentTime + delay;
-    const bufferSize = Math.floor(c.sampleRate * dur);
-    const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    if (!loadStarted) preload();
+    const list = buffers[name];
+    if (!list || !list.length) return;
+    const now = c.currentTime;
+    if (gap && lastAt[name] !== undefined && now - lastAt[name] < gap) return;
+    if (voices >= MAX_VOICES) return;
+    lastAt[name] = now;
+    let idx = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && idx === lastIdx[name]) idx = (idx + 1) % list.length;
+    lastIdx[name] = idx;
     const src = c.createBufferSource();
-    src.buffer = buffer;
-    const filter = c.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = filterFreq;
-    const gain = c.createGain();
-    env(gain, t0, 0.002, dur * 0.2, dur * 0.8, peak);
-    src.connect(filter).connect(gain).connect(master);
-    src.start(t0);
-    src.stop(t0 + dur + 0.02);
+    src.buffer = list[idx];
+    src.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
+    const g = c.createGain();
+    g.gain.value = vol * (0.85 + Math.random() * 0.15);
+    src.connect(g).connect(master);
+    voices++;
+    src.onended = () => { voices--; g.disconnect(); };
+    src.start(now + delay);
   }
 
   return {
@@ -71,9 +102,10 @@ const SFX = (() => {
     isMuted() { return muted; },
     // Площадка (CrazyGames muteAudio) — приоритет над muted выше, но не
     // подменяет/не сбрасывает его: оба флага независимы, звук глушится, если
-    // сработал хотя бы один (см. tone()/noiseBurst()).
+    // сработал хотя бы один (см. play()).
     setPlatformMuted(v) { platformMuted = v; },
-    unlock() { ensure(); },
+    unlock() { ensure(); preload(); },
+    preload,
     // Скрытая/неактивная вкладка (модерация, п.1.3 — см. document.
     // visibilitychange в game.js) — тем же способом, что MUSIC.pauseForAd:
     // suspend() всего контекста замораживает любой SFX, который случайно
@@ -81,36 +113,33 @@ const SFX = (() => {
     // в фоне.
     suspend() { if (ctx) ctx.suspend().catch(() => {}); },
     resume() { if (ctx) ctx.resume().catch(() => {}); },
-    // роль атакующего задаёт тембр удара — тяжёлый глухой, копьё резкое,
-    // герой отдельно узнаваем (см. ГДД, «Аудио: звук на все события мира»)
+    // роль атакующего задаёт тембр удара — тяжёлый глухой, копьё деревянное,
+    // герой — металл (см. ГДД, «Аудио: звук на все события мира»)
     hitMelee(role) {
       const cfg = {
-        melee: { filterFreq: 900, dur: 0.09 },
-        spear: { filterFreq: 1300, dur: 0.07 },
-        heavy: { filterFreq: 480, dur: 0.16 },
-        hero: { filterFreq: 750, dur: 0.11 },
-        hero_special: { filterFreq: 550, dur: 0.15 },
-      }[role] || { filterFreq: 900, dur: 0.09 };
-      noiseBurst({ dur: cfg.dur, peak: 0.5, filterFreq: cfg.filterFreq });
+        melee: ['hit_melee', 0.42],
+        spear: ['hit_spear', 0.5],
+        heavy: ['hit_heavy', 0.5],
+        hero: ['hit_hero', 0.55],
+        hero_special: ['hit_hero_special', 0.65],
+      }[role] || ['hit_melee', 0.42];
+      play(cfg[0], { vol: cfg[1], gap: 0.05 });
     },
-    hitRanged() { tone({ freq: 900, freq2: 300, dur: 0.08, type: 'triangle', peak: 0.3 }); },
-    shoot() { tone({ freq: 500, freq2: 700, dur: 0.08, type: 'sine', peak: 0.2 }); },
-    death() { noiseBurst({ dur: 0.22, peak: 0.45, filterFreq: 400 }); tone({ freq: 220, freq2: 80, dur: 0.25, type: 'sawtooth', peak: 0.2, delay: 0.02 }); },
-    spawn() { tone({ freq: 300, freq2: 500, dur: 0.12, type: 'square', peak: 0.18 }); },
-    buyDenied() { tone({ freq: 160, dur: 0.1, type: 'square', peak: 0.25 }); },
-    upgrade() { tone({ freq: 400, freq2: 900, dur: 0.25, type: 'sine', peak: 0.3 }); tone({ freq: 600, freq2: 1200, dur: 0.25, type: 'sine', peak: 0.2, delay: 0.06 }); },
-    mine() { noiseBurst({ dur: 0.06, peak: 0.35, filterFreq: 2200 }); tone({ freq: 1400, freq2: 1900, dur: 0.12, type: 'triangle', peak: 0.25, delay: 0.05 }); },
-    heroSpecial() { noiseBurst({ dur: 0.3, peak: 0.5, filterFreq: 600 }); tone({ freq: 150, freq2: 60, dur: 0.35, type: 'sawtooth', peak: 0.3 }); },
-    heroHurt() { tone({ freq: 250, freq2: 100, dur: 0.15, type: 'square', peak: 0.3 }); },
+    hitRanged() { play('hit_ranged', { vol: 0.32, gap: 0.05 }); },
+    shoot() { play('shoot', { vol: 0.22, gap: 0.07 }); },
+    death() { play('death', { vol: 0.38, rate: 0.9, gap: 0.08 }); },
+    spawn() { play('spawn', { vol: 0.28, gap: 0.12 }); },
+    buyDenied() { play('deny', { vol: 0.4, gap: 0.1 }); },
+    upgrade() { play('upgrade', { vol: 0.4 }); play('coins', { vol: 0.4, delay: 0.05 }); },
+    mine() { play('mine', { vol: 0.45, gap: 0.1 }); },
+    heroSpecial() { play('swing', { vol: 0.55 }); play('hit_heavy', { vol: 0.6, rate: 0.85, delay: 0.07 }); },
+    heroHurt() { play('hit_heavy', { vol: 0.35, rate: 1.1, gap: 0.15 }); },
     // Отдельный, более тревожный сигнал именно на смерть героя (не просто
     // урон) — стадия 2, баг-репорт: игрок должен заметить это, даже глядя
     // в другой конец арены, не только по надписи в углу HUD.
-    heroDown() {
-      noiseBurst({ dur: 0.35, peak: 0.5, filterFreq: 250 });
-      [220, 160, 110].forEach((f, i) => tone({ freq: f, dur: 0.4, type: 'sawtooth', peak: 0.3, delay: i * 0.14 }));
-    },
-    click() { tone({ freq: 700, dur: 0.05, type: 'sine', peak: 0.2 }); },
-    coreHit() { noiseBurst({ dur: 0.18, peak: 0.4, filterFreq: 300 }); },
+    heroDown() { play('death', { vol: 0.6, rate: 0.8 }); play('bell', { vol: 0.45, delay: 0.08 }); },
+    click() { play('click', { vol: 0.4, gap: 0.03 }); },
+    coreHit() { play('core_hit', { vol: 0.45, gap: 0.08 }); },
   };
 })();
 

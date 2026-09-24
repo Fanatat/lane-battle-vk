@@ -2691,4 +2691,7 @@ PLATFORM.ready.then(async () => {
     showScreen('menu');
   }
   BOOT.firstScreen();
+  // Сэмплы SFX — сразу после первого экрана, чтобы первый бой уже звучал;
+  // старт не ждёт.
+  SFX.preload();
 });
