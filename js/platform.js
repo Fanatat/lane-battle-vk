@@ -160,45 +160,93 @@ const PLATFORM = (() => {
 
   // Постоянный баннер справа — только ВК на ПК (решение основателя 24.09.2026,
   // отменяет прежнее «обойтись без баннера»: на ПК место сбоку есть).
-  // Вертикальная ориентация доступна только в веб-версии на десктопе, поэтому
-  // на мобильных и в приложениях ВК баннер не запрашивается вовсе.
-  // layout_type 'resize' — ВК сужает iframe, игра переразмечается по обычному
-  // window.resize и под баннер не заходит. Площадка сама ротирует креативы;
-  // нет показа (нет заполнения, сеть) — переспрашиваем раз в минуту. Закрыл
-  // игрок — больше не показываем до перезапуска.
+  // На мобильных ВК вертикального баннера нет — там баннер не запрашивается.
+  //
+  // Параметры — БЕЗ banner_location (24.09.2026, первая версия с
+  // banner_location:'top' на живом ВК баннер не показала). Рабочий набор
+  // взят у Нонограммы (game_studio_2/game2, adapters/vk_bridge.js), где
+  // вертикальный баннер справа на ПК реально показывался; дока ВК для
+  // десктопа даёт тот же набор с 'overlay'. 'resize' вместо 'overlay' —
+  // чтобы баннер не лёг поверх поля (шрам Нонограммы, ТЗ №10).
+  //
+  // Кто освобождает место — определяем по факту, не по запросу (шрам
+  // Нонограммы, ТЗ №11: двойной резерв даёт мёртвую зону): сузил ВК окно
+  // на ширину баннера — игра ничего не добавляет; не сузил — игра сама
+  // отступает справа на banner_width (CSS-переменная --vk-banner-reserve,
+  // style.css). Креативы ротирует площадка; нет показа — повтор раз в
+  // минуту; закрыл игрок — не показываем до перезапуска.
   const VK_SIDE_BANNER_PARAMS = {
-    banner_location: 'top',
+    layout_type: 'resize',
     banner_align: 'right',
     orientation: 'vertical',
-    layout_type: 'resize',
   };
   const VK_SIDE_BANNER_TIMEOUT_MS = 15000;
   const VK_SIDE_BANNER_RETRY_MS = 60000;
+  const VK_SIDE_BANNER_FALLBACK_WIDTH = 300; // если ВК не прислал banner_width
+  const VK_SIDE_BANNER_SHRINK_PX = 40; // сужение окна меньше этого — шум, не баннер
+  const VK_SIDE_BANNER_SETTLE_MS = 600;
   // Показ фиксируем и по событиям: ответ мог прийти уже после нашего
   // таймаута — повторный ShowBannerAd поверх живого баннера не нужен.
   let vkSideBannerShown = false;
   let vkSideBannerClosed = false;
-  function isVkDesktopWeb() {
+  let vkSideBannerWidth = 0; // сколько резервирует игра (0 — не резервирует)
+  let vkBannerReportedWidth = 0; // banner_width из последнего ответа/события ВК
+  let vkWidthBeforeBanner = 0;
+  function isVkDesktop() {
     const vkPlatform = new URLSearchParams(location.search).get('vk_platform') || '';
-    return vkPlatform.startsWith('desktop_web');
+    return vkPlatform.startsWith('desktop');
+  }
+  function platformShrankForBanner() {
+    return vkWidthBeforeBanner - window.innerWidth >= VK_SIDE_BANNER_SHRINK_PX;
+  }
+  function setVkBannerReserve(px) {
+    vkSideBannerWidth = px;
+    document.documentElement.style.setProperty('--vk-banner-reserve', px + 'px');
+    // Сама смена CSS-переменной resize не порождает — канвас/фон/HUD
+    // переразмечаются по тому же событию, что и при смене окна.
+    window.dispatchEvent(new Event('resize'));
+  }
+  function applyVkBannerReserve() {
+    if (!vkSideBannerShown || vkSideBannerClosed) return;
+    const want = platformShrankForBanner() ? 0 : (vkBannerReportedWidth || VK_SIDE_BANNER_FALLBACK_WIDTH);
+    if (want !== vkSideBannerWidth) setVkBannerReserve(want);
+  }
+  // Решение «резервировать или нет» — после паузы: ВК может сузить окно
+  // чуть позже ответа на ShowBannerAd.
+  function onVkBannerShown(data) {
+    vkSideBannerShown = true;
+    if (data && data.banner_width) vkBannerReportedWidth = data.banner_width;
+    setTimeout(applyVkBannerReserve, VK_SIDE_BANNER_SETTLE_MS);
   }
   function startVkSideBanner() {
-    if (!isVkDesktopWeb()) return;
+    if (!isVkDesktop()) return;
     vkBridge.subscribe((e) => {
       const type = e.detail && e.detail.type;
-      if (type === 'VKWebAppShowBannerAdResult' || type === 'VKWebAppBannerAdUpdated') vkSideBannerShown = true;
-      if (type === 'VKWebAppBannerAdClosedByUser') vkSideBannerClosed = true;
+      if (type === 'VKWebAppShowBannerAdResult' || type === 'VKWebAppBannerAdUpdated') onVkBannerShown(e.detail.data);
+      if (type === 'VKWebAppBannerAdClosedByUser') {
+        vkSideBannerClosed = true;
+        if (vkSideBannerWidth) setVkBannerReserve(0);
+      }
     });
+    // Окно поменялось (ВК сузил его позже замера, игрок растянул браузер) —
+    // пересчитываем, чтобы резерв не оказался двойным или пропавшим.
+    window.addEventListener('resize', applyVkBannerReserve);
     showVkSideBanner();
   }
   function showVkSideBanner() {
     if (vkSideBannerShown || vkSideBannerClosed) return;
+    vkWidthBeforeBanner = window.innerWidth;
     withTimeout(vkBridge.send('VKWebAppShowBannerAd', VK_SIDE_BANNER_PARAMS), VK_SIDE_BANNER_TIMEOUT_MS)
       .then((res) => {
         if (!(res && res.result)) throw new Error('banner-not-shown');
-        vkSideBannerShown = true;
+        onVkBannerShown(res);
       })
-      .catch(() => { setTimeout(showVkSideBanner, VK_SIDE_BANNER_RETRY_MS); });
+      .catch((err) => {
+        let detail;
+        try { detail = JSON.stringify(err); } catch (e) { detail = String(err); }
+        console.warn('[platform] VK banner не показан, повтор через минуту:', detail);
+        setTimeout(showVkSideBanner, VK_SIDE_BANNER_RETRY_MS);
+      });
   }
 
   // CrazyGames (методичка МЕТОДИЧКА_ВЫВОД_НА_CRAZYGAMES.md, §1-§2). В
