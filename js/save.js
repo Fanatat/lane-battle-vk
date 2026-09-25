@@ -9,7 +9,13 @@ function defaultProgress() {
     unlocked: 1, muted: false,
     // Магазин между раундами (см. ПЛАН.md, раунд 3) — валюта копится из
     // убийств за миссию и переносится между сессиями.
-    shopCurrency: 0,
+    // Фикс дублирования при слиянии (ТЗ_ФИКС_СЛИЯНИЕ_ВАЛЮТЫ.md): вместо
+    // одного поля, которое мержится через Math.max (баг — трата "теряется"
+    // при слиянии со старым большим облачным балансом), храним два
+    // неубывающих счётчика; актуальный баланс — вычисляемое поле, см.
+    // recalcShopCurrency().
+    shopCurrencyEarned: 0,
+    shopCurrencySpent: 0,
     towerA: false, towerB: false, trap: false,
     gearSword: 0, gearShield: 0, gearArmor: 0, // уровни 0-3
     gearLongBlade: 0, // утро: уровень 0-3, +10%/уровень дальности герою, компенсация за откат facing-фикса
@@ -59,13 +65,37 @@ function localSet(json) {
   localStorage.setItem(SAVE_KEY, json);
 }
 
+// Пересчёт актуального баланса из неубывающих счётчиков (см.
+// ТЗ_ФИКС_СЛИЯНИЕ_ВАЛЮТЫ.md) — звать после любого earn/spend в game.js и
+// после mergeProgress()/loadProgress().
+function recalcShopCurrency(progress) {
+  progress.shopCurrency = (progress.shopCurrencyEarned || 0) - (progress.shopCurrencySpent || 0);
+  return progress.shopCurrency;
+}
+
+// Миграция старого формата (только shopCurrency, без earned/spent) —
+// один раз при первой загрузке после обновления, чтобы не обнулить деньги
+// уже играющим (ТЗ_ФИКС_СЛИЯНИЕ_ВАЛЮТЫ.md, п.3).
+function migrateShopCurrency(data) {
+  if (!data) return data;
+  const hasEarned = Object.prototype.hasOwnProperty.call(data, 'shopCurrencyEarned');
+  const hasSpent = Object.prototype.hasOwnProperty.call(data, 'shopCurrencySpent');
+  if (!hasEarned && !hasSpent && Object.prototype.hasOwnProperty.call(data, 'shopCurrency')) {
+    data.shopCurrencyEarned = data.shopCurrency || 0;
+    data.shopCurrencySpent = 0;
+  }
+  return data;
+}
+
 function loadProgress() {
   try {
     const raw = localGet();
     const d = defaultProgress();
     if (!raw) return d;
-    const parsed = JSON.parse(raw);
-    return Object.assign(d, parsed);
+    const parsed = migrateShopCurrency(JSON.parse(raw));
+    const merged = Object.assign(d, parsed);
+    recalcShopCurrency(merged);
+    return merged;
   } catch (e) {
     return defaultProgress();
   }
@@ -122,13 +152,22 @@ function writeLocalRaw(data) {
 // максимум, булевы — ИЛИ (покупка/апгрейд/валюта никогда не может
 // уменьшиться или пропасть при слиянии); для остального (строки/объекты —
 // тема, текущий плейлист) — побеждает локальное устройство.
+// Особый случай — `shopCurrency`: это НЕ монотонное число (тратится), поэтому
+// оно исключено из общего цикла и не мержится по Math.max напрямую (иначе
+// офлайн-трата "теряется" при слиянии со старым большим облачным балансом,
+// см. баг-репорт в ТЗ_ФИКС_СЛИЯНИЕ_ВАЛЮТЫ.md). Вместо этого мержатся два
+// неубывающих счётчика shopCurrencyEarned/shopCurrencySpent (обычный числовой
+// max-кейс), а актуальный баланс пересчитывается после цикла.
 function mergeProgress(localData, cloudData) {
+  localData = migrateShopCurrency(localData);
+  cloudData = migrateShopCurrency(cloudData);
   const merged = defaultProgress();
   const keys = new Set([
     ...Object.keys(localData || {}),
     ...Object.keys(cloudData || {}),
   ]);
   for (const k of keys) {
+    if (k === 'shopCurrency') continue; // пересчитывается ниже из earned/spent, не мержится напрямую
     const hasLocal = localData && Object.prototype.hasOwnProperty.call(localData, k);
     const hasCloud = cloudData && Object.prototype.hasOwnProperty.call(cloudData, k);
     if (hasLocal && hasCloud) {
@@ -139,6 +178,7 @@ function mergeProgress(localData, cloudData) {
     } else if (hasLocal) merged[k] = localData[k];
     else if (hasCloud) merged[k] = cloudData[k];
   }
+  recalcShopCurrency(merged);
   return merged;
 }
 
@@ -147,7 +187,10 @@ async function syncProgress() {
   const cloud = await PLATFORM.loadCloud();
   if (!cloud.ok) {
     // сеть/мост недоступны — работаем только локально, в облако ничего не пишем
-    return localRaw ? Object.assign(defaultProgress(), localRaw) : defaultProgress();
+    if (!localRaw) return defaultProgress();
+    const local = Object.assign(defaultProgress(), migrateShopCurrency(localRaw));
+    recalcShopCurrency(local);
+    return local;
   }
   const result = mergeProgress(localRaw, cloud.data); // cloud.data может быть null — mergeProgress уже обрабатывает это как «взять только локальное»
   writeLocalRaw(result);

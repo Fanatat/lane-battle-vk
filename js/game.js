@@ -641,7 +641,8 @@ function shopNote(text) {
   return p;
 }
 function spend(cost) {
-  progress.shopCurrency -= cost;
+  progress.shopCurrencySpent = (progress.shopCurrencySpent || 0) + cost;
+  recalcShopCurrency(progress);
   saveProgress(progress);
   renderShop();
 }
@@ -802,7 +803,8 @@ function dlcRow(key, def, effectText) {
   // внутриигровую валюту, как и всё остальное в магазине.
   function buyWithDiamonds() {
     if (progress.shopCurrency < def.costDiamonds) { SFX.buyDenied(); return; }
-    progress.shopCurrency -= def.costDiamonds;
+    progress.shopCurrencySpent = (progress.shopCurrencySpent || 0) + def.costDiamonds;
+    recalcShopCurrency(progress);
     commitPurchase();
   }
   // Яндекс: настоящий ИНАП через SDK. Известный шрам студии — заведённый в
@@ -889,7 +891,8 @@ function timeOfDayRow() {
     btn.addEventListener('click', () => {
       if (!o.owned) {
         if (progress.shopCurrency < o.cost) return;
-        progress.shopCurrency -= o.cost;
+        progress.shopCurrencySpent = (progress.shopCurrencySpent || 0) + o.cost;
+        recalcShopCurrency(progress);
         if (o.id === 'day') progress.ownedTimeDay = true;
         if (o.id === 'night') progress.ownedTimeNight = true;
       }
@@ -924,7 +927,8 @@ function themeRow() {
     btn.addEventListener('click', () => {
       if (!owned) {
         if (progress.shopCurrency < t.cost) return;
-        progress.shopCurrency -= t.cost;
+        progress.shopCurrencySpent = (progress.shopCurrencySpent || 0) + t.cost;
+        recalcShopCurrency(progress);
         progress[t.ownedKey] = true;
       }
       progress.activeTheme = t.id;
@@ -1711,7 +1715,8 @@ function endMatch(result) {
   lastResult = result;
   // Валюта магазина копится за убийства независимо от исхода миссии
   // (см. ПЛАН.md, раунд 3).
-  progress.shopCurrency = (progress.shopCurrency || 0) + Math.round(match.shopKills);
+  progress.shopCurrencyEarned = (progress.shopCurrencyEarned || 0) + Math.round(match.shopKills);
+  recalcShopCurrency(progress);
   saveProgress(progress);
   // Округляем — накопление идёт дробными шагами decay-множителя (0.8/0.6/…),
   // без round тут вылезали хвосты вида "+22.7999999999995" (баг-репорт).
@@ -1881,13 +1886,15 @@ function renderResultAdRow(earnedDiamonds, isChapterFinal) {
     // слово-название валюты убрано из середины подписи — тот же смысл
     // передаёт значок в сумме справа, кнопка короче почти на треть.
     DOM.resultAdRow.appendChild(makeAdButton(`x${SHOP.adMissionMultiplier}`, bonus, () => {
-      progress.shopCurrency += bonus;
+      progress.shopCurrencyEarned = (progress.shopCurrencyEarned || 0) + bonus;
+      recalcShopCurrency(progress);
       DOM.shopCurrencyText.textContent = Math.floor(progress.shopCurrency);
     }));
   }
   if (isChapterFinal) {
     DOM.resultAdRow.appendChild(makeAdButton(I18N.t('result.adBonusLabel'), SHOP.adChapterBonus, () => {
-      progress.shopCurrency += SHOP.adChapterBonus;
+      progress.shopCurrencyEarned = (progress.shopCurrencyEarned || 0) + SHOP.adChapterBonus;
+      recalcShopCurrency(progress);
       DOM.shopCurrencyText.textContent = Math.floor(progress.shopCurrency);
     }));
   }
