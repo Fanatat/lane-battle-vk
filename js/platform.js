@@ -160,112 +160,10 @@ const PLATFORM = (() => {
     await vkBridge.send('VKWebAppInit');
     BOOT.mark('VKWebAppInit — ответ ВК');
     kind = 'vk';
-    startVkSideBanner();
   }
 
-  // Постоянный баннер справа — только ВК на ПК (решение основателя 24.09.2026,
-  // отменяет прежнее «обойтись без баннера»: на ПК место сбоку есть).
-  // На мобильных ВК вертикального баннера нет — там баннер не запрашивается.
-  //
-  // Параметры — строго по dev.vk.com (VKWebAppShowBannerAd + «Баннерная
-  // реклама в играх», таблица «Десктопная версия сайта → Вертикальный
-  // рекламный баннер справа»), сверено 24.09.2026:
-  //   • banner_align работает ТОЛЬКО при layout_type:'overlay'; при
-  //     'resize' он «не используется» — ВК ставит обычный баннер снизу/сверху
-  //     на всю ширину, а не справа;
-  //   • 'overlay' работает ТОЛЬКО при banner_location:'bottom';
-  //   • orientation:'vertical' — только для десктопной версии сайта.
-  // Обе прежние попытки (resize+top, затем resize без location) нарушали
-  // первое правило — справа баннера не было.
-  //
-  // 'overlay' кладёт баннер поверх игры («сдвиг контента разработчик
-  // делает сам») — поэтому игра отступает справа на banner_width
-  // (CSS-переменная --vk-banner-reserve, style.css). Кто освобождает место —
-  // всё равно проверяем по факту (шрам Нонограммы, ТЗ №11: двойной резерв
-  // даёт мёртвую зону): если ВК всё же сузил окно — игра не добавляет своё.
-  // Креативы ротирует площадка; нет показа — повтор раз в минуту; закрыл
-  // игрок — не показываем до перезапуска.
-  const VK_SIDE_BANNER_PARAMS = {
-    banner_location: 'bottom',
-    layout_type: 'overlay',
-    banner_align: 'right',
-    orientation: 'vertical',
-  };
-  const VK_SIDE_BANNER_TIMEOUT_MS = 15000;
-  const VK_SIDE_BANNER_RETRY_MS = 60000;
-  const VK_SIDE_BANNER_FALLBACK_WIDTH = 300; // если ВК не прислал banner_width
-  const VK_SIDE_BANNER_SHRINK_PX = 40; // сужение окна меньше этого — шум, не баннер
-  const VK_SIDE_BANNER_SETTLE_MS = 600;
-  // Показ фиксируем и по событиям: ответ мог прийти уже после нашего
-  // таймаута — повторный ShowBannerAd поверх живого баннера не нужен.
-  let vkSideBannerShown = false;
-  let vkSideBannerClosed = false;
-  let vkSideBannerWidth = 0; // сколько резервирует игра (0 — не резервирует)
-  let vkBannerReportedWidth = 0; // banner_width из последнего ответа/события ВК
-  let vkWidthBeforeBanner = 0;
-  function isVkDesktop() {
-    const vkPlatform = new URLSearchParams(location.search).get('vk_platform') || '';
-    return vkPlatform.startsWith('desktop');
-  }
-  function platformShrankForBanner() {
-    return vkWidthBeforeBanner - window.innerWidth >= VK_SIDE_BANNER_SHRINK_PX;
-  }
-  function setVkBannerReserve(px) {
-    vkSideBannerWidth = px;
-    document.documentElement.style.setProperty('--vk-banner-reserve', px + 'px');
-    // Сама смена CSS-переменной resize не порождает — канвас/фон/HUD
-    // переразмечаются по тому же событию, что и при смене окна.
-    window.dispatchEvent(new Event('resize'));
-  }
-  function applyVkBannerReserve() {
-    if (!vkSideBannerShown || vkSideBannerClosed) return;
-    const want = platformShrankForBanner() ? 0 : (vkBannerReportedWidth || VK_SIDE_BANNER_FALLBACK_WIDTH);
-    if (want !== vkSideBannerWidth) setVkBannerReserve(want);
-  }
-  // Решение «резервировать или нет» — после паузы: ВК может сузить окно
-  // чуть позже ответа на ShowBannerAd.
-  function onVkBannerShown(data) {
-    vkSideBannerShown = true;
-    if (data && data.banner_width) vkBannerReportedWidth = data.banner_width;
-    setTimeout(applyVkBannerReserve, VK_SIDE_BANNER_SETTLE_MS);
-  }
-  function startVkSideBanner() {
-    if (!isVkDesktop()) {
-      BOOT.mark('баннер: не ПК (vk_platform=' + (new URLSearchParams(location.search).get('vk_platform') || '—') + ')');
-      return;
-    }
-    vkBridge.subscribe((e) => {
-      const type = e.detail && e.detail.type;
-      if (type === 'VKWebAppShowBannerAdResult' || type === 'VKWebAppBannerAdUpdated') onVkBannerShown(e.detail.data);
-      if (type === 'VKWebAppBannerAdClosedByUser') {
-        vkSideBannerClosed = true;
-        if (vkSideBannerWidth) setVkBannerReserve(0);
-      }
-    });
-    // Окно поменялось (ВК сузил его позже замера, игрок растянул браузер) —
-    // пересчитываем, чтобы резерв не оказался двойным или пропавшим.
-    window.addEventListener('resize', applyVkBannerReserve);
-    showVkSideBanner();
-  }
-  function showVkSideBanner() {
-    if (vkSideBannerShown || vkSideBannerClosed) return;
-    vkWidthBeforeBanner = window.innerWidth;
-    BOOT.mark('баннер: запрос, окно ' + window.innerWidth + 'px');
-    withTimeout(vkBridge.send('VKWebAppShowBannerAd', VK_SIDE_BANNER_PARAMS), VK_SIDE_BANNER_TIMEOUT_MS)
-      .then((res) => {
-        BOOT.mark('баннер: ответ ' + JSON.stringify(res));
-        if (!(res && res.result)) throw new Error('banner-not-shown');
-        onVkBannerShown(res);
-      })
-      .catch((err) => {
-        let detail;
-        try { detail = JSON.stringify(err); } catch (e) { detail = String(err); }
-        if (detail === '{}' && err && err.message) detail = err.message;
-        BOOT.mark('баннер: ошибка ' + detail);
-        console.warn('[platform] VK banner не показан, повтор через минуту:', detail);
-        setTimeout(showVkSideBanner, VK_SIDE_BANNER_RETRY_MS);
-      });
-  }
+  // Баннерной рекламы в ВК нет (решение основателя 25.09.2026: боковой
+  // баннер снят целиком). Монетизация ВК — только rewarded/interstitial.
 
   // CrazyGames (методичка МЕТОДИЧКА_ВЫВОД_НА_CRAZYGAMES.md, §1-§2). В
   // отличие от Yandex/VK, скрипт SDK не грузится отсюда через loadScript() —
@@ -496,24 +394,38 @@ const PLATFORM = (() => {
   // ShowNativeAdsRequest/CheckNativeAdsRequest): при нехватке rewarded-роликов
   // площадка подставляет interstitial вместо отказа.
   const VK_REWARD_PARAMS = { ad_format: 'reward', use_waterfall: true };
-  const VK_AD_TIMEOUT_MS = 40000;
+  // Баг 25.09.2026 (скрин основателя, дважды подряд): показ rewarded был
+  // обёрнут в таймаут 40с — загрузка + ролик + финальная карточка ВК
+  // дольше, игра объявляла «реклама недоступна» ПОВЕРХ идущего ролика, а
+  // поздний ответ ВК «досмотрено» выбрасывался — награда терялась. VK
+  // отвечает на ShowNativeAds только после закрытия рекламы, поэтому ответ
+  // ждём сколько угодно. Предохранитель ниже — только от немого моста:
+  // через 3 мин снимает паузу игры/звука, но ответ ВК по-прежнему ждёт.
+  const VK_AD_HANG_GUARD_MS = 180000;
   function showVkRewarded() {
     return new Promise((resolve) => {
       if (!vkBridge) { resolve(false); return; }
       pauseHook();
-      withTimeout(vkBridge.send('VKWebAppShowNativeAds', VK_REWARD_PARAMS), VK_AD_TIMEOUT_MS)
-        .then((res) => { resumeHook(); resolve(!!(res && res.result)); })
-        .catch(() => { resumeHook(); resolve(false); });
+      let resumed = false;
+      const resumeOnce = () => { if (!resumed) { resumed = true; resumeHook(); } };
+      const guard = setTimeout(resumeOnce, VK_AD_HANG_GUARD_MS);
+      const finish = (rewarded) => { clearTimeout(guard); resumeOnce(); resolve(rewarded); };
+      vkBridge.send('VKWebAppShowNativeAds', VK_REWARD_PARAMS)
+        .then((res) => finish(!!(res && res.result)))
+        .catch(() => finish(false));
     });
   }
 
   // ---- межуровневая реклама (VK/Яндекс; на CrazyGames midgame отключён
   // решением основателя, локально — no-op) --------------------------------
   const INTERSTITIAL_TIMEOUT_MS = 15000;
+  // Тот же баг 25.09: таймаут 15с запускал следующую миссию прямо под ещё
+  // идущей рекламой. Здесь ответ ВК ждём до предохранителя — дальше игра
+  // обязана продолжиться в любом исходе (ГДД, межуровневая по «Далее»).
   function showVkInterstitial() {
     if (!vkBridge) return Promise.resolve(false);
     pauseHook();
-    return withTimeout(vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'interstitial' }), INTERSTITIAL_TIMEOUT_MS)
+    return withTimeout(vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'interstitial' }), VK_AD_HANG_GUARD_MS)
       .then((res) => !!(res && res.result))
       .catch(() => false)
       .then((shown) => { resumeHook(); return shown; });

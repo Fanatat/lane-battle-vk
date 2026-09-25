@@ -65,11 +65,6 @@ html, body {
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
-/* Боковой баннер ВК на ПК: если площадка сама не сузила окно, игра
-   отступает справа на ширину баннера (--vk-banner-reserve ставит
-   js/platform.js, вне ВК-ПК он 0). Полноэкранные fixed-слои ниже
-   отступают на ту же величину через right. */
-html { width: calc(100% - var(--vk-banner-reserve, 0px)); }
 #stage {
   height: 100%; display: flex; align-items: center; justify-content: center;
   position: relative;
@@ -477,7 +472,7 @@ canvas#game {
      видны только во время match/paused/help, см. showScreen() в game.js)
      остаётся ПОЛНОСТЬЮ нетронутым — 2.5:1 канваса и его выравнивание с
      HUD не меняются ни на пиксель, риска исказить графику боя нет. */
-  position: fixed; inset: 0; right: var(--vk-banner-reserve, 0px); display: flex; flex-direction: column;
+  position: fixed; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; gap: .7em;
   padding: 1em;
   /* Утро (баг-репорт с телефона, скриншоты меню/карты глав): раньше при
@@ -849,7 +844,7 @@ canvas#game {
 /* Тестовая заглушка рекламы (площадка не подключена — локальный запуск/QA)
    — явно помечена как тест, чтобы никто не спутал с настоящим показом. */
 .ad-test-overlay {
-  position: fixed; inset: 0; right: var(--vk-banner-reserve, 0px); z-index: 500; display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center;
   background: rgba(12,8,4,.88);
 }
 .ad-test-box {
