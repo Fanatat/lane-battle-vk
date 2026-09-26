@@ -45,7 +45,34 @@ function defaultProgress() {
     // громкости, требование основателя "никогда не смешивать" (см. ГДД).
     musicMuted: false,
     playlist: { order: [...MUSIC_ORDER_DEFAULT], enabled: { battle_theme: true, battle_march: true, battle_pulse: true }, shuffle: false },
+    // Раунд 15 (И4): звёзды миссий { [missionId]: 1..3 } — лучший результат
+    // (HP своей крепости на победе), сливается поэлементным max, см.
+    // mergeProgress; туториал миссии 1 показан (js/tutorial.js).
+    missionStars: {},
+    tutorialDone: false,
+    // r15 И10: разовый тост «эпоха сбрасывается каждую битву» (js/tutorial.js).
+    // Булев флаг — при облачном слиянии ИЛИ (показан на любом устройстве —
+    // больше не показывается), счётчик начатых миссий — число, слияние max
+    // (общий цикл mergeProgress ниже, отдельной ветки не нужно).
+    ageResetTipSeen: false,
+    missionsStarted: 0,
   };
+}
+
+// Поэлементный max двух словарей «id → число» (звёзды миссий): прогресс
+// с разных устройств объединяется, лучший результат по каждой миссии
+// сохраняется — не сумма (удвоение, как было с валютой) и не затирание.
+function mergeMaxMap(a, b) {
+  const out = {};
+  for (const src of [a, b]) {
+    if (!src || typeof src !== 'object') continue;
+    for (const id of Object.keys(src)) {
+      const v = Number(src[id]);
+      if (!Number.isFinite(v)) continue;
+      out[id] = Math.max(out[id] || 0, v);
+    }
+  }
+  return out;
 }
 
 // CrazyGames Data Module (методичка §7): документация прямо предупреждает —
@@ -168,6 +195,7 @@ function mergeProgress(localData, cloudData) {
   ]);
   for (const k of keys) {
     if (k === 'shopCurrency') continue; // пересчитывается ниже из earned/spent, не мержится напрямую
+    if (k === 'missionStars') { merged[k] = mergeMaxMap(localData && localData[k], cloudData && cloudData[k]); continue; } // раунд 15 (И4)
     const hasLocal = localData && Object.prototype.hasOwnProperty.call(localData, k);
     const hasCloud = cloudData && Object.prototype.hasOwnProperty.call(cloudData, k);
     if (hasLocal && hasCloud) {

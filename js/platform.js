@@ -692,10 +692,15 @@ const PLATFORM = (() => {
       else window.CrazyGames.SDK.game.gameplayStop();
     },
     showRewardedVideo() {
-      if (kind === 'yandex') return showYandexRewarded();
-      if (kind === 'vk') return showVkRewarded();
-      if (kind === 'crazygames') return showCrazyGamesRewarded();
-      return showTestAd();
+      const p = kind === 'yandex' ? showYandexRewarded()
+        : kind === 'vk' ? showVkRewarded()
+        : kind === 'crazygames' ? showCrazyGamesRewarded()
+        : showTestAd();
+      // Воронка (js/analytics.js, раунд 15): итог ролика — ad_reward_ok/fail.
+      return p.then((ok) => {
+        try { if (typeof Analytics !== 'undefined') Analytics.adReward(!!ok); } catch (e) { /* аналитика не ломает рекламу */ }
+        return ok;
+      });
     },
     // true/false — площадка умеет проверять заранее, результат достоверен;
     // null — площадка (Yandex/CrazyGames) такой проверки не даёт, вызывающий

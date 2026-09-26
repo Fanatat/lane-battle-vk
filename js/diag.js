@@ -3,14 +3,18 @@
 // (BOOT.mark из platform.js/game.js) и тайминги всех загруженных файлов
 // (Resource Timing), время считается от начала навигации iframe.
 //
-// Отчёт всегда уходит в консоль ('[boot]') при показе первого экрана и
-// повторно через 20 с (к этому моменту догружается музыка). На экране —
-// только по запросу: #debug в адресе (у ВК: vk.com/appXXXX#debug — хэш
-// передаётся в iframe игры) или ?debug=1. Из консоли — BOOT.print().
+// Отчёт — только по запросу: #debug в адресе (у ВК: vk.com/appXXXX#debug —
+// хэш передаётся в iframe игры) или ?debug=1 — тогда в консоль ('[boot]')
+// при показе первого экрана и повторно через 20 с, и окном на экране.
+// Из консоли — BOOT.print(true).
 'use strict';
 
 const BOOT = (() => {
   const marks = [];
+  // Журнал событий воронки (js/analytics.js, раунд 15) — последние
+  // EVENTS_MAX, в том же окне #debug под этапами старта.
+  const events = [];
+  const EVENTS_MAX = 40;
   let enabled = false;
   try {
     enabled = /(^|[#&])debug\b/.test(location.hash) || new URLSearchParams(location.search).has('debug');
@@ -40,6 +44,11 @@ const BOOT = (() => {
     lines.push('');
     lines.push('Этапы:');
     marks.forEach(([name, t]) => lines.push('  ' + String(Math.round(t)).padStart(6) + ' мс  ' + name));
+    if (events.length) {
+      lines.push('');
+      lines.push('События воронки (Analytics.track, последние ' + events.length + '):');
+      events.forEach(([name, t, p]) => lines.push('  ' + String(Math.round(t)).padStart(6) + ' мс  ' + name + (p ? ' ' + p : '')));
+    }
     const res = (performance.getEntriesByType ? performance.getEntriesByType('resource') : [])
       .slice()
       .sort((a, b) => b.duration - a.duration)
@@ -78,8 +87,11 @@ const BOOT = (() => {
     marks.push([name, performance.now()]);
     render();
   }
-  function print() {
-    console.info('[boot]\n' + report());
+  // Раунд 15 (И7): в консоль — только в режиме #debug/?debug=1 (куратор
+  // CrazyGames видел русский дамп загрузки при каждом старте). Вручную из
+  // консоли — BOOT.print(true).
+  function print(force) {
+    if (enabled || force === true) console.info('[boot]\n' + report());
     render();
   }
 
@@ -97,14 +109,27 @@ const BOOT = (() => {
     mark,
     print,
     report,
+    enabled: () => enabled,
+    // Событие воронки (из js/analytics.js). В консоль — только в режиме
+    // #debug, чтобы не шуметь у обычных игроков.
+    event(name, params) {
+      let p = '';
+      try { p = params && Object.keys(params).length ? JSON.stringify(params) : ''; } catch (e) { /* пусто */ }
+      events.push([name, performance.now(), p]);
+      if (events.length > EVENTS_MAX) events.shift();
+      if (enabled) { console.info('[funnel]', name, p); render(); }
+    },
     // Зовётся из game.js при показе первого экрана — отчёт в консоль сразу
-    // и повторно через 20 с, когда догрузится музыка.
+    // и повторно через 20 с. Событие 'boot:firstscreen' открывает загрузку
+    // музыки меню (js/audio.js, MUSIC — ленивая загрузка) и шлёт
+    // boot_first_screen в воронку (js/analytics.js).
     firstScreen() {
       if (firstScreenSeen) return;
       firstScreenSeen = true;
       mark('ПЕРВЫЙ ЭКРАН ПОКАЗАН');
       print();
       setTimeout(print, 20000);
+      try { window.dispatchEvent(new Event('boot:firstscreen')); } catch (e) { /* старые браузеры */ }
     },
   };
 })();

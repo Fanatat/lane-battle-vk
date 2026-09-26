@@ -69,66 +69,19 @@ html, body {
   height: 100%; display: flex; align-items: center; justify-content: center;
   position: relative;
 }
-/* Декоративный фон-подложка (баг-репорт основателя: чёрные пустые поля по
-   краям экрана на широких мониторах, где #arenaWrap — фиксированная
-   пропорция 2.5:1 в центре) — не участвует в геймплее и не трогает
-   координаты арены/HUD, просто дорисовывает небо/холмы в палитре текущей
-   эпохи на весь вьюпорт позади игрового окна, см. game.js/renderBackdrop. */
-#backdrop { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+/* Раунд 15 (И1, ТЗ_КАЧЕСТВО_CRAZYGAMES, П1): кадр на весь экран. Раньше
+   #arenaWrap держал аспект 2.5:1 (width: min(100%, 250dvh)), а полосы
+   сверху/снизу закрашивал отдельный #backdrop своим генератором — на 16:9
+   и в iframe CrazyGames это читалось как «игра в полосе» со швом. Теперь
+   канвас боя, HUD и тач-управление занимают весь вьюпорт, а вписывание
+   мира делает камера в game.js (resizeCanvas/applyViewTransform): вся
+   ширина арены в кадре, по высоте — продолжение неба и земли. Логические
+   координаты мира не меняются. #backdrop удалён. */
 #arenaWrap {
-  position: relative; z-index: 1;
-  /* Утро (баг-репорт с телефона): раньше ширина считалась только от 100%
-     контейнера, без учёта высоты вьюпорта — на широком, но НИЗКОМ
-     альбомном экране (адресная строка съедает высоту сильнее, чем в
-     эмуляторе) итоговая высота (ширина/2.5) превышала реально видимую
-     область, и меню/карта глав обрезались сверху и снизу. min() берёт
-     меньшее из "по ширине контейнера" и "по высоте вьюпорта, пересчитанной
-     в ширину через тот же коэффициент 2.5" — арена больше не может стать
-     выше, чем реально видно. */
-  width: min(100%, 250vh);
-  width: min(100%, 250dvh);
-  /* Баг-репорт основателя 2026-09-21: на широких мониторах игра занимала
-     фиксированные 1250×500 CSS px и меньше, остальной экран заполнял
-     ЧИСТО ДЕКОРАТИВНЫЙ #backdrop — не окно игры, а подложка позади него.
-     Этот max-width:1250px висел тут с самого MVP (f1f7f5e), без привязки к
-     какому-либо реальному ограничению — просто исходная прикидка автора.
-     Убран: min(100%, 250dvh) выше уже сам по себе реализует «расти, пока
-     одна из сторон не упрётся в край вьюпорта» — по ширине упирается в
-     100% контейнера, по высоте — в 250dvh (тот же коэффициент 2.5, что и
-     aspect-ratio ниже), так что отдельный потолок в пикселях не защищал ни
-     от какого реального переполнения, только душил игру на больших экранах.
-     #backdrop остаётся — там, где соотношение сторон окна отличается от
-     2.5:1, он по-прежнему дорисовывает недостающую сторону (сверху/снизу
-     или по бокам), просто теперь эта полоса кратно уже, а не половина
-     экрана. См. также resizeCanvas() (game.js) — разрешение канваса
-     синхронизировано с реальным размером этого бокса, а не зашито в
-     фиксированные 1000×400 физических пикселей. */
-  aspect-ratio: 1000 / 400;
-  /* Стадия 2 (баг-репорт, тот же скриншот "часть экрана черная", что и
-     видел основатель): непрозрачный #000 тут перекрывал #backdrop на ВСЕХ
-     экранах — меню/магазин/миссии/плейлист/пауза, не только в бою.
-     В бою это было незаметно, т.к. поверх рисуется #game на весь кадр, но
-     вне матча под HUD-панелями оставался сплошной чёрный прямоугольник.
-     #backdrop рисуется всегда (drawBackdrop() не завязан на экран), просто
-     не давали ему быть видимым. */
-  background: transparent;
-  box-shadow: 0 0 40px rgba(0,0,0,.6);
+  position: absolute; inset: 0; z-index: 1;
+  background: #15100b;
   user-select: none;
 }
-/* Вечер 08.09.2026 (тот же баг-репорт про заполнение кадра): эта тень,
-   раньше висевшая всегда, ложится ровно на границу letterbox-бокса арены
-   (y≈100 и y≈500 на честном 1000×600 — подтверждено замером яркости
-   пикселей по вертикали, см. отчёт). Даже после того как .screen (меню,
-   магазин, карта глав и т.п.) стал занимать кадр целиком (см. .screen
-   ниже), эта тёмная кайма продолжала визуально "обрезать" арену меньшим
-   боксом внутри кадра — читалась как отдельная маленькая рамка, а не как
-   часть общей картинки. Тень нужна, только пока НА САМОМ ДЕЛЕ виден
-   канвас боя (HUD показан — экраны match/paused/help, см. showScreen() в
-   game.js) — на остальных экранах это чисто декоративный шов сам по себе,
-   никак не привязанный к геймплею. :has() тут безопасен (не аспект и не
-   размер арены — просто убираем тень), сам канвас/HUD не трогаем ни на
-   пиксель. */
-#arenaWrap:not(:has(#hud:not(.hidden))) { box-shadow: none; }
 
 /* Игра — альбомная по решению ГДД (см. КОНЦЕПТ_ГДД.md, «Платформа и
    стек»); в портретной ориентации на телефоне арена по аспекту 2.5:1
@@ -177,7 +130,7 @@ canvas#game {
 /* ---------- Кнопки: толстая тёмная обводка, объём, пружинящий hover ---------- */
 .menu-btn, .tool-btn, .icon-btn, .si-buy, .touch-btn {
   border: 3px solid var(--ink);
-  font-family: 'Lilita One', 'Fredoka', sans-serif;
+  word-spacing: .16em; font-family: 'Lilita One', 'Fredoka', sans-serif;
   font-weight: 400;
   letter-spacing: .02em;
   cursor: pointer;
@@ -236,70 +189,77 @@ canvas#game {
 .menu-btn.secondary:active:not(:disabled) { box-shadow: inset 0 1px 0 var(--edge-light), 0 2px 0 0 var(--secondary-shadow), 0 4px 8px rgba(0,0,0,.3); }
 
 /* ---------- HUD ---------- */
+/* Раунд 15 (И1): масштаб интерфейса — от высоты вьюпорта (без потолка
+   15px, из-за которого на 1080p HUD был мелким), тонкие полосы HP без
+   деревянных плашек, золото крупно над панелью покупки. */
 #hud {
   position: absolute; inset: 0; pointer-events: none;
   display: flex; flex-direction: column; justify-content: space-between;
-  font-size: clamp(10px, 1.6vw, 15px);
+  /* r15 И10 (куратор: на 800×450 цифры HP/цены/подписи 7–10 px): база HUD
+     не мельче 13px — любые .85em-подписи внутри остаются ≥12px. */
+  font-size: clamp(13px, 2.6vh, 24px);
 }
 .hud-top {
   display: flex; align-items: flex-start; justify-content: space-between;
-  padding: .6em .7em;
-  gap: .5em;
+  padding: .55em .8em;
+  gap: .8em;
   position: relative; /* точка отсчёта для .hero-revive-box, см. ниже */
 }
-.core-box {
-  width: 30%; pointer-events: auto;
-  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3));
-  border: 3px solid var(--ink); border-radius: var(--r-lg);
-  box-shadow: inset 0 1px 0 var(--edge-light), 0 4px 10px rgba(0,0,0,.35);
-  padding: .4em .6em;
+.core-box { width: 27%; min-width: 9em; pointer-events: auto; }
+.core-head {
+  display: flex; align-items: center; gap: .35em; line-height: 1.1; margin-bottom: .18em;
+  word-spacing: .16em; font-family: 'Lilita One', 'Fredoka', sans-serif; font-size: max(13px, .9em); white-space: nowrap;
+  color: #fff; text-shadow: 0 1px 0 var(--ink), 0 0 3px rgba(0,0,0,.7), 1px 0 0 var(--ink), -1px 0 0 var(--ink);
 }
+.core-enemy .core-head { justify-content: flex-end; }
+.core-flag { width: .8em; height: .8em; border-radius: 2px; border: 1.5px solid var(--ink); background: #3fae6b; flex-shrink: 0; }
+.core-enemy .core-flag { background: #d8402a; }
+.core-label { letter-spacing: .08em; opacity: .95; }
 .core-enemy { text-align: right; }
-.core-label { font-size: .8em; opacity: .85; letter-spacing: .1em; font-weight: 600; }
-.bar { position: relative; height: 1.15em; background: #2a1c10; border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; }
-.bar-fill { position: absolute; top:0; left:0; bottom:0; width: 100%; transition: width .15s ease-out; }
-.bar-hp-player .bar-fill { background: linear-gradient(#7bd98a,#2f8f45); left:0; }
-.bar-hp-enemy .bar-fill { background: linear-gradient(#ff7a5c,#b8321a); right:0; left:auto; }
+.bar { position: relative; height: .62em; background: rgba(26,18,10,.55); border: 2px solid var(--ink); border-radius: 999px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.bar-fill { position: absolute; top:0; left:0; bottom:0; width: 100%; transition: width .15s ease-out; border-radius: 999px; }
+.bar-hp-player .bar-fill { background: linear-gradient(#9af0a4,#35a552); left:0; }
+.bar-hp-enemy .bar-fill { background: linear-gradient(#ff9a7c,#d03a1e); right:0; left:auto; }
 .core-enemy .bar-fill { left: auto; right: 0; }
-.bar-text { font-size: .85em; margin-top: .2em; opacity: .95; font-weight: 600; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
-.gold-row { margin-top: .35em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.7); border-radius: 8px; transition: background .2s ease; }
+.bar-text { opacity: .95; }
+/* Золото — главный ресурс боя: крупно, прямо над кнопками покупки. */
+.gold-row {
+  display:flex; align-items:center; justify-content: center; gap:.3em; padding: .05em .6em;
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.55em; line-height: 1.1; color: var(--gold-text);
+  text-shadow: 0 2px 0 var(--ink), 0 0 4px rgba(0,0,0,.6), 1.5px 0 0 var(--ink), -1.5px 0 0 var(--ink);
+  border-radius: 999px; transition: background .2s ease; pointer-events: auto;
+}
 /* Видимый сигнал штрафа за копление золота (ночная правка, находка
    ревьюера №1 — механика реальна, но раньше никак не показывалась). */
 @keyframes goldHoardPulse { 0%,100% { background: rgba(200,64,30,0); } 50% { background: rgba(200,64,30,.45); } }
 .gold-row.gold-hoard-flash { animation: goldHoardPulse .35s ease-in-out 4; }
-.gold-dot { width:1em; height:1em; border-radius:50%; background: radial-gradient(#fff3c4,#e0a030); display:inline-block; border:2px solid var(--ink); }
-/* Валюта «бриллиант» (раунд 5) — живой счётчик в HUD рядом с золотом. */
-/* Раунд 14: валюта-«бриллиант» осознанно остаётся голубой (единственный
-   холодный акцент — читается как драгоценность на фоне дерева), обводка —
-   тёплая (--ink), не синяя. */
-.diamond-row { margin-top: .2em; display:flex; align-items:center; gap:.35em; font-family: 'Lilita One', sans-serif; color: #9ad9f0; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
-.diamond-dot { width:.9em; height:.9em; background: linear-gradient(135deg,#d6f4ff,#3fa9e0); display:inline-block; border:2px solid var(--ink); transform: rotate(45deg); }
+.gold-dot { width:.9em; height:.9em; border-radius:50%; background: radial-gradient(circle at 35% 30%, #fff6d0, #f2c14a 45%, #c8821e); display:inline-block; border:2px solid var(--ink); flex-shrink: 0; }
+/* Валюта магазина — «Кристаллы»/«Gems» (раунд 15, одно имя и одна иконка
+   везде: HUD, магазин, итог, реклама за награду) — нарисованный огранённый
+   кристалл (SVG), а не повёрнутый квадрат/эмодзи. */
+.diamond-row { margin-top: .3em; display:inline-flex; align-items:center; gap:.3em; word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: max(13px, .9em); color: #bfefff; text-shadow: 0 1px 0 var(--ink), 1px 0 0 var(--ink), -1px 0 0 var(--ink), 0 0 3px rgba(0,0,0,.6); }
+.diamond-dot {
+  width: 1.05em; height: 1.05em; display: inline-block; flex-shrink: 0; vertical-align: -.18em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 3h12l4.5 6L12 21.5 1.5 9z' fill='%234cc3ef'/%3E%3Cpath d='M6 3h12l-2.5 6h-7z' fill='%23c8f3ff'/%3E%3Cpath d='M1.5 9h7L12 21.5z' fill='%232a9fd6'/%3E%3Cpath d='M22.5 9h-7L12 21.5z' fill='%23187fb8'/%3E%3Cpath d='M8.5 9h7L12 21.5z' fill='%236fd8fa'/%3E%3Cpath d='M6 3h12l4.5 6L12 21.5 1.5 9z' fill='none' stroke='%231a120a' stroke-width='1.7' stroke-linejoin='round'/%3E%3Cpath d='M9 5.2l1.6 1.6' stroke='%23fff' stroke-width='1.3' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
 .mission-title {
-  flex: 1; text-align: center; font-family: 'Lilita One', sans-serif; font-size: 1.15em; letter-spacing: .04em;
-  padding: .35em .8em; margin-top: 0; color: var(--gold-text);
-  text-shadow: 0 2px 2px rgba(0,0,0,.7);
+  flex: 1 1 0; min-width: 0; text-align: center; word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.1em; letter-spacing: .03em;
+  padding: .1em .4em; margin-top: 0; color: var(--gold-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 2px 0 var(--ink), 1.5px 0 0 var(--ink), -1.5px 0 0 var(--ink), 0 -1px 0 var(--ink);
 }
 .icon-btn {
   pointer-events: auto; background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2));
-  color: var(--paper); min-width: 48px; min-height: 48px; width: 2.6em; height: 2.6em; font-size: 1em;
+  color: var(--paper); min-width: 44px; min-height: 44px; width: 2.4em; height: 2.4em; font-size: 1em;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
   box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
 }
+.icon-btn.hud-round { border-radius: 50%; flex-shrink: 0; word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.05em; }
 .icon-btn:active { box-shadow: 0 2px 0 0 var(--secondary-shadow); }
+/* SVG-иконки из спрайта (index.html) — размер от шрифта кнопки. */
+svg.ico { width: 1.15em; height: 1.15em; display: inline-block; vertical-align: -.2em; color: var(--gold-text); pointer-events: none; }
+.icon-btn svg.ico { width: 55%; height: 55%; color: var(--paper); }
 
-.first-hint {
-  align-self: center; margin-bottom: .5em; pointer-events: none;
-  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); color: var(--gold-text);
-  padding: .5em 1em; border-radius: var(--r-lg); font-size: .85em; text-align: center;
-  font-weight: 600; box-shadow: 0 4px 10px rgba(0,0,0,.4);
-  transition: opacity .6s ease; opacity: 1;
-}
-.first-hint.fading { opacity: 0; }
-/* Стадия 2 (баг-репорт): на мобильном альбомном баннер во всю ширину
-   закрывал добрую половину поля боя в первые важные секунды матча — на
-   узкий, компактный по центру, чтобы бой по бокам оставался виден. */
-@media (pointer: coarse) and (orientation: landscape) {
-  .first-hint { max-width: 60%; font-size: .68em; padding: .4em .7em; }
-}
 .hud-bottom {
   display: flex; flex-direction: column; align-items: center; gap: .4em;
   padding: 0 .6em .6em;
@@ -368,17 +328,41 @@ canvas#game {
    Резервирование места под .hero-mini/.toolbar теперь считается в JS по
    настоящим getBoundingClientRect() джойстика и .touch-actions, не по
    отдельной формуле, которая может незаметно разойтись с оригиналом. */
+/* Раунд 15 (И5): индикатор героя, а не кнопка — без деревянной плашки и
+   тени «нажми меня»: круглый портрет головы героя (золотой, как в риге) и
+   прижатая к нему полоска HP, как рамка юнита в RTS. Пока герой мёртв
+   (.dead из updateHud) — портрет серый, поверх него секунды до респауна. */
 .hero-mini {
-  display:flex; flex-direction:column; align-items:center; gap:.25em; pointer-events:auto; margin-right:.6em;
-  background: var(--grain), linear-gradient(var(--royal-2), var(--royal-3)); border: 3px solid var(--ink); border-radius: var(--r-lg); padding: .3em .4em;
-  box-shadow: inset 0 1px 0 var(--edge-light), 0 4px 10px rgba(0,0,0,.35);
+  display:flex; flex-direction:row; align-items:center; pointer-events:auto; cursor: default; margin-right:.6em;
+  align-self: center;
 }
 .hero-mini-icon {
-  width:1.9em; height:1.9em; border-radius:50%; background: linear-gradient(var(--secondary-1), var(--secondary-2));
-  border:2px solid var(--gold-text); color:var(--gold-text); display:flex; align-items:center; justify-content:center; font-size:1em;
+  position: relative; z-index: 1; flex-shrink: 0;
+  width:2.5em; height:2.5em; border-radius:50%; overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #8fc3ea, #3b74c4);
+  border: 3px solid var(--gold-text); box-shadow: 0 0 0 2px var(--ink), 0 3px 8px rgba(0,0,0,.4);
+  display:flex; align-items:flex-end; justify-content:center;
 }
-.bar-hp-hero { width: 4em; height: .6em; }
+.hero-mini-icon svg.ico { width: 100%; height: 100%; vertical-align: 0; }
+.hero-mini-timer {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.15em; color: #fff3c4;
+  text-shadow: 0 2px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
+}
+.hero-mini.dead .hero-mini-icon { border-color: #b9a78a; background: radial-gradient(circle at 50% 35%, #7a7068, #3a322c); }
+.hero-mini.dead .hero-mini-icon svg.ico { filter: grayscale(1) brightness(.55); }
+.hero-mini.dead .hero-mini-timer { display: flex; z-index: 2; }
+/* r15 И16: кольцо оставшегося времени респауна поверх серого портрета. */
+.hero-mini-ring { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; z-index: 1; }
+.hero-mini.dead .hero-mini-ring { display: block; }
+#heroMiniRing { transition: stroke-dashoffset .25s linear; }
+/* r15 И16: слот под своей полосой HP (тач) — портрет героя + кнопка выкупа. */
+.hero-slot-top { display: flex; align-items: center; gap: .5em; margin-top: .3em; pointer-events: auto; }
+.hero-slot-top:empty { display: none; }
+.hero-slot-top .hero-mini { margin-right: 0; }
+.bar-hp-hero { width: 3.2em; height: .8em; margin-left: -.55em; padding: 0; }
 .bar-hp-hero .bar-fill { background: linear-gradient(var(--cta-1), var(--cta-2)); }
+.hero-mini.dead .bar-hp-hero { background: rgba(120,30,20,.55); }
 
 /* Таймер автовоскрешения героя + досрочный выкуп (раунд 7, баг-репорт:
    герой раньше воскресал незаметно быстро). Утро (баг-репорт основателя
@@ -396,16 +380,40 @@ canvas#game {
    и сама подстраивается. Не на линии боя, не над тулбаром, не поверх
    кнопки "Продолжить" на паузе (там вообще не показывается, см.
    updateHud() в game.js). Компактный размер + перенос кнопки строкой ниже. */
+/* r15 И16 (куратор №5: «красная панель „Captain down“ на 20 с закрывает
+   верх-центр поля при каждой смерти героя»): панели больше нет. Таймер —
+   кольцо + секунды на портрете героя, здесь — только компактная кнопка
+   выкупа рядом с портретом. ПК: #heroReviveBox — ребёнок .hud-bottom, над
+   портретом (left/bottom выставляет positionReviveBox() в game.js по
+   реальному rect портрета). Тач: переезжает в #heroSlotTop справа от
+   портрета, под свою полосу HP (.in-slot, в потоке). */
+.hud-bottom { position: relative; }
 .hero-revive-box {
-  position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 6;
-  margin-top: .3em;
-  display: flex; flex-direction: column; align-items: center; gap: .3em; pointer-events: auto;
-  background: linear-gradient(var(--alert-2), var(--royal-3)); border: 3px solid var(--ink);
-  border-radius: var(--r-lg); padding: .3em .6em; font-size: .78em; white-space: nowrap;
-  animation: popIn .2s ease-out, heroDownGlow 1.1s ease-in-out .2s infinite;
+  position: absolute; left: 0; bottom: 100%; z-index: 6;
+  display: flex; align-items: center; pointer-events: auto; white-space: nowrap;
+  font-size: max(13px, .95em);
+  animation: popIn .2s ease-out;
 }
-.hero-revive-box #heroReviveTimer { color: var(--gold-text); font-family: 'Lilita One', sans-serif; }
-.hero-revive-box .menu-btn { min-height: 32px; padding: .2em .6em; font-size: .8em; }
+.hero-revive-box.in-slot { position: static; font-size: 14px; }
+.hero-revive-box .menu-btn { animation: heroDownGlow 1.1s ease-in-out .2s infinite; }
+/* r15 И10 (куратор, мобильный: «(B)» и текст ~7px): кнопка «Воскресить 30»
+   крупная, без упоминания клавиш; хоткей B — отдельным бейджем, только на
+   устройствах с клавиатурой (см. .key-badge ниже и @media pointer:coarse). */
+.hero-revive-box .menu-btn {
+  display: inline-flex; align-items: center; gap: .35em;
+  min-height: 44px; padding: .2em .8em; font-size: max(14px, 1em);
+}
+.hero-revive-box .menu-btn .gold-dot { width: .95em; height: .95em; }
+.key-badge {
+  display: inline-block; min-width: 1.45em; padding: 0 .25em; text-align: center;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: max(13px, .8em); line-height: 1.35; /* r15 И18: 13px */
+  background: rgba(26,18,10,.72); color: var(--paper); border: 1px solid rgba(255,215,122,.45); border-radius: 5px;
+  text-shadow: none;
+}
+@media (pointer: coarse) {
+  .key-badge { display: none; }
+  .hero-revive-box .menu-btn { min-height: 44px; font-size: 16px; padding: .15em .75em; }
+}
 /* Стадия 2 (баг-репорт): текст статуса героя в углу HUD легко пропустить,
    если взгляд игрока на другом конце арены — коробка выкупа теперь
    постоянно пульсирует, пока герой мёртв, не только при появлении. */
@@ -434,14 +442,51 @@ canvas#game {
 @media (hover: hover) and (pointer: fine) {
   .tool-btn:hover:not(.disabled) { border-color: var(--gold-text); }
 }
-.tool-btn.disabled { opacity: .45; cursor: not-allowed; transform: none !important; filter: none !important; }
+/* r15 И10: недоступная кнопка — приглушена, но подпись и цена читаются
+   (при .45 «Залп»/«Эра» на тёмном дереве сливались с фоном). */
+.tool-btn.disabled { opacity: .58; cursor: not-allowed; transform: none !important; filter: saturate(.55) !important; }
 .tool-btn.pressed { transform: translateY(3px); box-shadow: none; }
 .tool-icon { font-size: 1.3em; line-height:1; }
-.tool-icon-canvas { width: 2em; height: 2.2em; display:block; }
-.tool-cost { font-size: .7em; color: var(--gold-text); margin-top: .1em; font-weight: 700; font-family: 'Fredoka', sans-serif; }
+/* И5: иконки способностей — того же размера, что стопка монет апгрейда
+   (1.35em), и в одном стиле (SVG-спрайт index.html, тёмный контур). */
+.tool-icon svg.ico { width: 1.35em; height: 1.35em; vertical-align: 0; display: block; color: var(--gold-text); }
+/* Раунд 15 (И1): апгрейд дохода рисовался эмодзи «💲» (разметка — в
+   buildToolbar, И2) — глиф прячем, вместо него нарисованная стопка монет. */
+#upgradeBtn .tool-icon {
+  width: 1.35em; height: 1.35em; overflow: hidden; text-indent: -9em; white-space: nowrap;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cg stroke='%231a120a' stroke-width='2.4'%3E%3Cellipse cx='20' cy='37' rx='13' ry='5.5' fill='%23e0a030'/%3E%3Cellipse cx='20' cy='31' rx='13' ry='5.5' fill='%23ffd35c'/%3E%3Cellipse cx='30' cy='22' rx='13' ry='5.5' fill='%23e0a030'/%3E%3Cellipse cx='30' cy='15' rx='13' ry='5.5' fill='%23ffe08a'/%3E%3C/g%3E%3Cpath d='M38 3v10M33 8h10' stroke='%237bd98a' stroke-width='3.4' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* И7 (куратор: на 800×450 иконка ~12px, подписи 7–8px): иконка крупнее,
+   цена и хоткей не мельче 11px, HP в шапке — не мельче 12px. */
+.tool-icon-canvas { width: 2.4em; height: 2.64em; display:block; margin-top: -.1em; }
+.tool-cost { font-size: max(12px, .78em); line-height: 1.1; color: var(--gold-text); margin-top: .1em; font-weight: 700; font-family: 'Fredoka', sans-serif; }
+/* И5: хоткей — один бейдж у всех кнопок тулбара (юниты 1–4, Q, V, T, R, F,
+   E): тот же угол, размер и цвет, поверх кольца эры и шторки кулдауна;
+   на тач-экранах клавиатуры нет — бейджи скрыты (см. @media ниже). */
 .tool-key {
-  position: absolute; top: 2px; left: 4px; font-size: .62em; opacity: .9; font-weight: 700;
-  background: rgba(0,0,0,.45); border-radius: 4px; padding: 0 .25em; font-family: 'Fredoka', sans-serif;
+  position: absolute; top: 3px; left: 3px; z-index: 2; min-width: 1.3em; text-align: center;
+  font-size: max(13px, .66em); line-height: 1.2; font-weight: 700; color: var(--paper); /* r15 И18: 13px */
+  background: rgba(26,18,10,.7); border: 1px solid rgba(255,215,122,.35); border-radius: 4px; padding: 0 .2em; font-family: 'Fredoka', sans-serif;
+}
+.tool-btn .tool-cost { position: relative; z-index: 1; }
+@media (hover: none) and (pointer: coarse) { .tool-key { display: none; } }
+/* r15 И10 (куратор CrazyGames: на 800×450 кнопки ~48px, цены/подписи/клавиши
+   7–9px): на устройствах с мышью кнопки тулбара не меньше 58×60px, иконки
+   крупнее, цена и подпись ≥13px, бейдж клавиши ≥12px. 10 кнопок + индикатор
+   героя при 800px занимают ~730px — без горизонтальной прокрутки ряда. На
+   тач-экранах (pointer: coarse) — прежние 48px: там ряд делит ширину с
+   джойстиком и тач-кнопками (layoutHudBottomRow). */
+@media not all and (pointer: coarse) {
+  .tool-btn { min-width: 58px; min-height: 60px; width: 3.9em; height: 4.1em; padding: .25em 0 .2em; }
+  .tool-icon-canvas { width: max(34px, 2.5em); height: max(37px, 2.75em); }
+  .tool-icon svg.ico { width: max(22px, 1.6em); height: max(22px, 1.6em); }
+  #upgradeBtn .tool-icon { width: max(24px, 1.7em); height: max(24px, 1.7em); }
+  .tool-cost { font-size: max(13px, .8em); }
+  .tool-key { top: 2px; left: 2px; }
+  .hero-mini-icon { width: max(40px, 2.9em); height: max(40px, 2.9em); }
+  .bar-hp-hero { width: max(40px, 3.2em); height: max(10px, .8em); }
+  .hud-bottom-row { gap: max(6px, .45em); }
+  .toolbar { gap: max(5px, .38em); }
 }
 .special-btn { background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3)); border-color: var(--ink); }
 .cd-overlay {
@@ -482,7 +527,18 @@ canvas#game {
      обрезки в принципе больше не бывает, максимум неидеальное
      центрирование. */
   overflow-y: auto;
+  /* Раунд 15 (И1): размер текста экранов — от высоты вьюпорта (на 1080p
+     меню/магазин были мелкими), и мягкое появление экрана за 150 мс. */
+  font-size: clamp(13px, 2.3vh, 24px);
+  animation: screenFade .15s ease-out;
+  /* Раунд 15 (И7, куратор CrazyGames): экраны — поверх HUD. Раньше у
+     .screen не было z-index, а у .tool-key/.tool-cost тулбара — 1–2, и
+     цифры клавиш и цены просвечивали сквозь справку/паузу/магазин/итог.
+     10 — выше HUD, тач-кнопок (4), отсчёта (6) и слоя обучения (7), ниже
+     окна тестовой рекламы (500) и уведомлений (600). */
+  z-index: 10;
 }
+@keyframes screenFade { from { opacity: 0; } to { opacity: 1; } }
 .screen.overlay { background: rgba(12,8,4,.85); }
 /* Экран итога (раунд 5-6, повторная жалоба основателя): фон на самом деле
    уже анимируется (день/ночь, ветер, флаги, юниты) — просто 85%-затемнение
@@ -518,7 +574,7 @@ canvas#game {
   margin: 0 0 .1em; padding: .25em 1.1em; border-radius: 999px;
   background: none;
   color: var(--paper); text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
-  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.25em; letter-spacing: .06em;
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.25em; letter-spacing: .06em;
   box-shadow: none;
 }
 
@@ -535,7 +591,7 @@ canvas#game {
   margin: 0 0 .1em; padding: .25em 1.2em; border-radius: 999px;
   background: none;
   color: var(--paper); text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
-  font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.35em; letter-spacing: .06em;
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 1.35em; letter-spacing: .06em;
   box-shadow: none;
 }
 .popup-card p { max-width: 26em; opacity: .95; }
@@ -549,7 +605,7 @@ canvas#game {
 .result-reward-label { font-size: .85em; opacity: .85; }
 .result-reward-value {
   display: inline-flex; align-items: center; gap: .3em;
-  font-family: 'Lilita One', sans-serif; font-size: 1.7em; color: var(--gold-text);
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.7em; color: var(--gold-text);
   text-shadow: 0 2px 0 var(--ink), 0 4px 10px rgba(0,0,0,.5);
 }
 .result-reward-value .diamond-dot { width: 1.1em; height: 1.1em; }
@@ -565,12 +621,73 @@ canvas#game {
 }
 .popup-card.lose h2 { color: var(--alert-1); }
 
-#screenMenu h1 {
-  font-family: 'Lilita One', sans-serif;
-  font-size: clamp(1.7em, 5.2vw, 3.2em); letter-spacing: .08em; margin: 0 0 .1em; color: var(--paper);
-  -webkit-text-stroke: 1px var(--ink);
-  text-shadow: 0 4px 0 var(--ink), 0 8px 16px rgba(0,0,0,.55);
+/* r15 И10: экран загрузки (до PLATFORM.ready) — затемнённая сцена меню,
+   вращающаяся эмблема и бегущая полоса; ни текста, ни кнопок. */
+#screenLoading { background: radial-gradient(ellipse at center, rgba(21,16,11,.35), rgba(21,16,11,.8)); gap: 1.2em; animation: none; }
+.loading-emblem {
+  width: max(64px, 13vh); height: max(64px, 13vh); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2));
+  border: 4px solid var(--ink); box-shadow: 0 0 0 3px var(--gold-text), 0 10px 24px rgba(0,0,0,.5);
+  animation: loadingSpin 1.6s cubic-bezier(.6,.1,.4,.9) infinite;
 }
+.loading-emblem svg.ico { width: 68%; height: 68%; color: var(--gold-text); }
+.loading-bar { width: min(60vw, 280px); height: 12px; border-radius: 999px; overflow: hidden; background: rgba(0,0,0,.45); border: 2px solid var(--ink); }
+.loading-bar-fill { width: 35%; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--cta-1), var(--cta-2)); animation: loadingRun 1.1s ease-in-out infinite; }
+@keyframes loadingSpin { 0% { transform: rotate(0); } 60%, 100% { transform: rotate(360deg); } }
+@keyframes loadingRun { 0% { transform: translateX(-110%); } 100% { transform: translateX(300%); } }
+
+/* Раунд 15 (И1): главное меню. Содержимое — в верхних ~55% кадра, ниже —
+   живая сцена на канвасе (крепости, герой, отряды — drawMenuScene в game.js).
+   Логотип — два слоя одного текста: задний даёт толстую тёмную обводку и
+   тень, передний — золотую градиентную заливку. Ничего не переносится. */
+#screenMenu { justify-content: flex-start; padding-top: max(1em, 7vh); gap: 0; }
+#screenMenu .menu-main { display: flex; flex-direction: column; align-items: center; gap: max(8px, 2.2vh); }
+#screenMenu .logo {
+  display: grid; margin: 0 0 max(4px, 1.2vh); word-spacing: .16em; font-family: 'Lilita One', 'Fredoka', sans-serif; font-weight: 400;
+  font-size: min(11vh, 8.4vw); line-height: 1.05; letter-spacing: .04em; white-space: nowrap;
+  transform: rotate(-1.5deg);
+}
+#screenMenu .logo > span { grid-area: 1 / 1; padding: 0 .12em; }
+#screenMenu .logo-back {
+  /* обводка кольцом теней, а не -webkit-text-stroke: у того на острых
+     углах кириллицы («И», «К») вылезали шипы-митры */
+  color: #2a1608;
+  text-shadow:
+    .07em 0 0 #2a1608, -.07em 0 0 #2a1608, 0 .07em 0 #2a1608, 0 -.07em 0 #2a1608,
+    .05em .05em 0 #2a1608, -.05em .05em 0 #2a1608, .05em -.05em 0 #2a1608, -.05em -.05em 0 #2a1608,
+    0 .14em 0 #2a1608, .06em .13em 0 #2a1608, -.06em .13em 0 #2a1608,
+    0 .2em .3em rgba(0,0,0,.45);
+}
+#screenMenu .logo-front {
+  background: linear-gradient(#fffbe6 0%, #ffe38f 40%, #f4ae3e 62%, #e07a26 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+#screenMenu .menu-btn { white-space: nowrap; }
+#screenMenu .menu-btn.primary-big { font-size: max(20px, 4.6vh); min-height: 0; padding: .38em 2.8em; min-width: 7.5em; }
+#screenMenu .menu-row { display: flex; gap: max(10px, 1.6vh); }
+#screenMenu .menu-row .menu-btn { font-size: max(15px, 2.9vh); min-height: 0; padding: .45em 1.4em; min-width: 7.6em; }
+/* Настройки — шестерёнка в правом верхнем углу, поповер под ней. */
+.settings-btn { position: absolute; top: max(10px, 2vh); right: max(10px, 2vh); font-size: max(15px, 2.4vh); z-index: 3; }
+.settings-btn.active { border-color: var(--gold-text); }
+.settings-btn svg.ico { width: 62%; height: 62%; }
+.settings-pop {
+  position: absolute; top: calc(max(10px, 2vh) + max(15px, 2.4vh) * 2.4 + 10px); right: max(10px, 2vh); z-index: 3;
+  display: flex; flex-direction: column; gap: .45em; min-width: 13em; padding: .8em .9em;
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3));
+  border: 3px solid var(--bronze-dark); border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--edge-light), 0 10px 26px rgba(0,0,0,.5);
+  animation: popIn .15s ease-out; text-align: left;
+}
+.settings-title { word-spacing: .16em; font-family: 'Lilita One', sans-serif; color: var(--gold-text); text-shadow: 0 1px 0 var(--ink); margin-bottom: .1em; }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1em; width: 100%;
+  background: rgba(0,0,0,.18); border: 2px solid rgba(26,18,10,.6); border-radius: 12px;
+  color: var(--paper); font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 1em;
+  padding: .45em .6em; min-height: 44px; cursor: pointer; white-space: nowrap;
+}
+.setting-row .toggle-switch { display: inline-block; pointer-events: none; }
+.settings-pop .menu-btn.small { width: 100%; margin-top: .2em; }
 .mission-list { display: flex; flex-direction: column; gap: .5em; max-height: 55vh; overflow-y: auto; width: min(90vw, 26em); }
 .mission-item {
   display:flex; justify-content:space-between; align-items:center; gap:1em;
@@ -598,7 +715,16 @@ canvas#game {
 }
 .chapter-row { display: flex; flex-direction: column; align-items: stretch; }
 .chapter-label { font-size: .85em; font-weight: 600; opacity: .9; margin-bottom: -.2em; }
-.chapter-svg { width: 100%; height: 84px; display: block; }
+.chapter-svg { width: 100%; height: auto; aspect-ratio: 520 / 114; /* r15 И16: 100 → 114, крупнее звёзды */ display: block; border-radius: 14px; background: linear-gradient(rgba(255,225,180,.07), rgba(0,0,0,.18)); box-shadow: inset 0 0 0 1px rgba(255,225,180,.12); }
+.chapter-row.chapter-locked { opacity: .6; }
+.chapter-row.chapter-locked .chapter-label {
+  margin: 0; padding: .45em .8em; border: 2px dashed rgba(255,225,180,.22); border-radius: 12px; background: rgba(0,0,0,.14);
+}
+.chapter-label svg.ico { width: .95em; height: .95em; margin-right: .3em; color: #b9a78a; }
+.chapter-label { margin-bottom: .15em; text-align: left; padding-left: .3em; }
+@keyframes nodePulse { 0%,100% { opacity: .9; transform: scale(1); } 50% { opacity: .3; transform: scale(1.12); } }
+.trail-node-svg .node-pulse { transform-origin: center; transform-box: fill-box; animation: nodePulse 1.4s ease-in-out infinite; }
+.trail-node-svg:not(.locked):hover .node-pulse { transform: none; }
 .trail-node-svg circle { transition: transform .15s cubic-bezier(.34,1.56,.64,1); transform-origin: center; transform-box: fill-box; }
 .trail-node-svg:not(.locked) { cursor: pointer; }
 .trail-node-svg:not(.locked):hover circle { transform: scale(1.12); }
@@ -619,7 +745,9 @@ canvas#game {
 }
 .link-btn:hover { color: rgba(255,255,255,.7); }
 .link-btn.confirming { color: var(--alert-1); text-decoration: none; font-weight: 600; }
-.mute-row .menu-btn { flex: 1; font-size: .85em; padding: .6em 1em; }
+/* И7: «Sound: on» переносился на две строки в паузе — без переноса, поля уже. */
+.mute-row .menu-btn { flex: 1 1 auto; font-size: .85em; padding: .6em .7em; white-space: nowrap; }
+.popup-card .mute-row { justify-content: center; }
 
 .playlist-list {
   display: flex; flex-direction: column; gap: .5em; width: min(92vw, 28em); max-height: 50vh; overflow-y: auto;
@@ -647,52 +775,22 @@ canvas#game {
 /* Отсчёт 3…2…1 перед первым заходом новичка (раунд 5). */
 #countdownOverlay {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(12,8,4,.55); z-index: 6; pointer-events: none;
+  background: rgba(12,8,4,.25); z-index: 6; pointer-events: none; /* И1: ≤ .3 — сцена видна за отсчётом */
 }
 #countdownNum {
-  font-family: 'Lilita One', sans-serif; font-size: clamp(3em, 14vw, 7em); color: var(--gold-text);
+  word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: clamp(3em, 14vw, 7em); color: var(--gold-text);
   -webkit-text-stroke: 3px var(--ink); text-shadow: 0 6px 0 var(--ink);
   animation: popIn .3s ease-out;
 }
-/* Тулбар увеличен и с общим затемнением сцены, пока видна подсказка
-   новичку сразу после отсчёта (раунд 5) — плавно сходит на нет при первом
-   действии игрока (см. dismissFirstMissionHint в game.js). */
-#hud.intro-enlarged::before {
-  content: ''; position: absolute; inset: 0; background: rgba(12,8,4,.5);
-  pointer-events: none; transition: opacity .6s ease;
-}
-#hud.intro-enlarged .hud-bottom-row {
-  transform: scale(1.35); transition: transform .6s cubic-bezier(.34,1.56,.64,1);
-}
-.hud-bottom-row { transition: transform .6s cubic-bezier(.34,1.56,.64,1); }
-/* Третий заход того же наложения на этом тулбаре (баг-репорт основателя,
-   скриншоты Яндекса налезали друг на друга): scale(1.35) увеличивает
-   .hud-bottom-row ВИЗУАЛЬНО, не резервируя под это место в layout —
-   getBoundingClientRect() подтвердил реальное пересечение #upgradeBtn/
-   #touchPickaxe на 568px (777px²). Оба предыдущих раунда (см. историю
-   выше, ~250-300) чинили это резервированием места по РЕАЛЬНЫМ размерам
-   соседей — но здесь резервировать нечего: на touch .hud-bottom-row и так
-   растянут (align-self:stretch, см. `@media (pointer: coarse)` выше)
-   почти на весь зазор между джойстиком и .touch-actions, который сам
-   вычислен из их настоящих getBoundingClientRect() в layoutHudBottomRow()
-   (game.js) — любой scale>1 такого уже-заполненного зазора неизбежно
-   вылезает за оба его края при ЛЮБОЙ ширине экрана, точный коэффициент
-   тут ничего не спасает. Убираем визуальное увеличение именно на touch
-   (там и было наложение, только там ряд растянут на весь зазор) —
-   затемнение подсказки (::before выше) остаётся и само по себе выделяет
-   тулбар (он рисуется поверх затемнения как обычный DOM-потомок #hud, а
-   не увеличенным), просто без зума. На десктопе (pointer:fine, ряд НЕ
-   растянут на весь экран) поведение не тронуто — там пересечений не было
-   и жалобы не было. */
-@media (pointer: coarse) {
-  #hud.intro-enlarged .hud-bottom-row { transform: none; }
-}
+/* Раунд 15 (И4): увеличенный тулбар с затемнением на время подсказки
+   новичку (раунд 5) убран вместе с подсказкой — вместо них пошаговый
+   туториал со стрелками (js/tutorial.js, стили — блок «r15 И4» в конце). */
 
 /* Раунд 8, п.G — рамка вокруг счётчика очков, чтобы визуально
    отделить его от заголовка "Магазин" и от списка карточек снизу (были
    слитными, жалоба основателя). */
 .shop-currency {
-  color: var(--gold-text); font-size: 1.1em; font-family: 'Lilita One', sans-serif;
+  color: var(--gold-text); font-size: 1.1em; word-spacing: .16em; font-family: 'Lilita One', sans-serif;
   text-shadow: 0 1px 2px rgba(0,0,0,.6);
   border: 2px solid var(--ink); border-radius: var(--r-lg);
   background: rgba(0,0,0,.2); padding: .3em .9em; margin: 0;
@@ -736,7 +834,7 @@ canvas#game {
 .shop-header-left { display: flex; align-items: center; gap: .6em; }
 .shop-header-row h2 { margin: 0; }
 .shop-header-row .shop-currency { font-size: .95em; padding: .25em .6em; }
-.menu-btn.small { min-height: 36px; padding: .3em 1em; font-size: .85em; }
+.menu-btn.small { min-height: 36px; padding: .3em 1em; font-size: max(12px, .85em); } /* r15 И10: ≥12px */
 /* Список карточек — своя рамка-«окно» (была ещё и своим скроллом — баг
    "двойной скролл в компании/магазине", утро 08.09.2026: .shop-list имел
    собственный overflow-y:auto ОДНОВРЕМЕННО с .panel-card — убрано, скролл
@@ -754,7 +852,7 @@ canvas#game {
    секции магазина друг от друга. */
 .shop-section-title {
   flex-shrink: 0;
-  margin: .5em 0 -.1em; padding: .15em .3em; font-family: 'Lilita One', sans-serif;
+  margin: .5em 0 -.1em; padding: .15em .3em; word-spacing: .16em; font-family: 'Lilita One', sans-serif;
   font-size: .85em; color: var(--gold-text); text-shadow: 0 1px 2px rgba(0,0,0,.6);
   border-bottom: 2px solid rgba(255,225,180,.22);
 }
@@ -781,11 +879,47 @@ canvas#game {
 /* Переключатель "Время суток" (ночная правка) — три мини-кнопки в ряд. */
 .time-select-group { display: flex; gap: .4em; flex-wrap: wrap; }
 .time-select-group .si-buy, .toggle-inline { padding: .3em .7em; min-height: 36px; font-size: .85em; }
-.shop-item .si-desc { font-size: .8em; opacity: .8; overflow-wrap: break-word; }
+/* И7: не мельче 11px (на 800×450 было ~10px), тексты сокращены до одной строки. */
+.shop-item .si-desc { font-size: max(11px, .8em); opacity: .85; overflow-wrap: break-word; }
+/* Раунд 15 (И1): карточка магазина — иконка | название, описание,
+   «было → станет» | цена с кристаллом. Вкладки «Улучшения» / «Музыка и
+   стиль»; запертые по главе позиции — компактной строкой внизу секции. */
+.shop-tabs { display: flex; gap: .4em; width: min(94vw, 36em); flex-shrink: 0; margin-bottom: -.3em; }
+.shop-tab {
+  flex: 1; padding: .4em .8em; border: 3px solid var(--ink); border-radius: 14px 14px 6px 6px;
+  background: rgba(0,0,0,.28); color: var(--paper); word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1em;
+  cursor: pointer; white-space: nowrap; opacity: .85;
+}
+.shop-tab.active { background: linear-gradient(var(--cta-1), var(--cta-2)); color: #4a2c00; opacity: 1; box-shadow: 0 3px 0 var(--cta-shadow); }
+.shop-item.has-icon { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: .75em; }
+.si-icon {
+  width: 2.7em; height: 2.7em; padding: .22em; border-radius: 12px; flex-shrink: 0;
+  background: radial-gradient(circle at 50% 38%, rgba(255,235,190,.22), rgba(0,0,0,.28));
+  border: 2px solid rgba(26,18,10,.6);
+}
+.si-body { min-width: 0; display: flex; flex-direction: column; gap: .14em; }
+.si-tier { font-size: .78em; color: var(--gold-text); margin-left: .25em; }
+.si-stat { font-size: .82em; word-spacing: .16em; font-family: 'Lilita One', sans-serif; letter-spacing: .02em; }
+.si-stat-label { opacity: .75; font-family: 'Fredoka', sans-serif; font-weight: 600; }
+.si-from { opacity: .7; font-weight: 400; }
+.si-arrow { color: var(--gold-text); margin: 0 .3em; }
+.si-to { color: #9af0a4; font-weight: 400; }
+.si-buy .diamond-dot { margin-left: .25em; }
+.si-buy { display: inline-flex; align-items: center; justify-content: center; }
+.shop-item.is-owned { opacity: .82; }
+.shop-locked-strip {
+  flex-shrink: 0; font-size: .78em; opacity: .75; padding: .35em .7em; text-align: left; line-height: 1.55;
+  border: 2px dashed rgba(255,225,180,.22); border-radius: 12px;
+}
+.shop-locked-strip svg.ico { width: 1em; height: 1em; margin-right: .3em; color: #b9a78a; }
+.sls-label { font-weight: 600; margin-right: .2em; }
+.sls-item em { font-style: normal; opacity: .75; }
+.sls-sep { margin: 0 .45em; opacity: .5; }
+.option-item .time-select-group { margin-top: .3em; }
 .shop-item .si-buy {
   padding: .35em .9em; min-height: 40px;
   background: linear-gradient(var(--cta-1), var(--cta-2));
-  color: #4a2c00; font-family: 'Lilita One', sans-serif; font-size: .9em; white-space: nowrap;
+  color: #4a2c00; word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: .9em; white-space: nowrap;
   box-shadow: 0 4px 0 0 var(--cta-shadow), 0 5px 8px rgba(0,0,0,.35);
 }
 .shop-item .si-buy:active:not(:disabled):not(.owned) { box-shadow: 0 1px 0 0 var(--cta-shadow); }
@@ -827,7 +961,7 @@ canvas#game {
   background: linear-gradient(#6a5a48, #3e3226); color: #b8a890; border-color: var(--ink);
   box-shadow: 0 4px 0 0 #241a10; cursor: not-allowed;
 }
-.ad-reward-amount { opacity: .85; font-size: .9em; }
+.ad-reward-amount { opacity: .85; font-size: max(12px, .9em); } /* r15 И18: не мельче 12px */
 /* Утро 08.09.2026 (просьба основателя — «сделать слегка пульсирующей, как
    бы привлекая внимание»): лёгкое дыхание масштабом, не агрессивный bounce
    — эта кнопка встречается только на экране победы, поэтому применяется
@@ -853,7 +987,7 @@ canvas#game {
   box-shadow: 0 12px 28px rgba(0,0,0,.5);
 }
 .ad-test-badge {
-  display: inline-block; font-family: 'Lilita One', sans-serif; font-size: 1.1em;
+  display: inline-block; word-spacing: .16em; font-family: 'Lilita One', sans-serif; font-size: 1.1em;
   color: var(--gold-text); margin-bottom: .4em;
 }
 .ad-test-box p { font-size: .85em; opacity: .9; margin: 0 0 .8em; }
@@ -926,18 +1060,54 @@ body.theme-blue-red {
     left: 9%; bottom: calc(3% + env(safe-area-inset-bottom, 0px));
     background: rgba(255,255,255,.06); border-color: rgba(26,18,10,.55);
   }
+  /* r15 И16: 9% → 5% — +30…40px ширины нижнему ряду на телефоне; джойстик
+     ниже линии земли и полупрозрачный, крепость им не закрывается. */
+  #joyBase { left: max(12px, 5%, env(safe-area-inset-left, 0px)); }
   #joyStick { background: rgba(255,224,138,.4); border-color: rgba(26,18,10,.55); }
 }
+/* r15 И16 (куратор №5, блокер: «на 844×390 с м3 не нажать „Эра“ — #ageBtn
+   под #touchPickaxe»): тач-кнопки больше не стоят в РЯД (4 кнопки ≈ 280px
+   ширины — тулбару из 7 кнопок не хватало места), а веером вокруг большой
+   «Атаки» в правом нижнем углу — как в мобильных экшенах: вихрь слева от
+   атаки, кирка по диагонали, клич над атакой. Занятая ширина ≈ атака +
+   одна малая кнопка. Радиус веера — не меньше 1.42 малой кнопки: тогда
+   даже ПРЯМОУГОЛЬНИКИ соседних кнопок не пересекаются (проверка
+   getBoundingClientRect в tmp/i16/overlap_check.py), не только круги. */
+/* r15 И18 (куратор №6: «Кирка/Вихрь закрывают правую четверть поля — там
+   крепость врага и точка спавна»): второстепенные кнопки — 48px и ОДНИМ
+   рядом слева от «Атаки», по нижнему краю (кирка · вихрь · АТАКА): выше
+   ~линии ног юнитов ничего, кроме самой «Атаки», не поднимается. Клич
+   (только если куплен) — над «Атакой», у самого правого края. Не готовые
+   (кулдаун) — полупрозрачные (.cd-wait, updateHud). */
 .touch-actions {
-  position: absolute; right: 4%; bottom: calc(8% + env(safe-area-inset-bottom, 0px));
-  display: flex; gap: 3vmin; pointer-events: auto;
+  --tb: 48px;                        /* малая кнопка */
+  --tm: clamp(60px, 19vmin, 92px);   /* атака */
+  --tg: clamp(6px, 1.6vmin, 10px);
+  position: absolute; right: max(10px, 3%); right: max(10px, 3%, env(safe-area-inset-right, 0px));
+  bottom: calc(4% + env(safe-area-inset-bottom, 0px));
+  width: calc(var(--tm) + 2 * (var(--tb) + var(--tg)));
+  height: var(--tm);
+  pointer-events: none;
 }
+.touch-actions .touch-btn { position: absolute; pointer-events: auto; transition: opacity .2s ease; }
+.touch-actions .touch-btn.cd-wait { opacity: .75; }
+#touchAttack { right: 0; bottom: 0; }
+#touchSpecial { right: calc(var(--tm) + var(--tg)); bottom: 0; }
+#touchPickaxe { right: calc(var(--tm) + 2 * var(--tg) + var(--tb)); bottom: 0; }
+#touchCry { right: calc((var(--tm) - var(--tb)) / 2); bottom: calc(var(--tm) + var(--tg)); }
 .touch-btn {
-  position: relative; min-width: 48px; min-height: 48px; width: 15vmin; height: 15vmin; max-width: 74px; max-height: 74px; border-radius: 50%;
+  position: relative; min-width: 48px; min-height: 48px; width: var(--tb, 15vmin); height: var(--tb, 15vmin); border-radius: 50%;
   background: var(--grain), linear-gradient(var(--secondary-1), var(--secondary-2)); color: var(--gold-text);
   font-size: 1.6em; touch-action: none; overflow: hidden;
   box-shadow: inset 0 1px 0 var(--edge-light), inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 var(--secondary-shadow), 0 6px 10px rgba(0,0,0,.35);
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
 }
+/* Раунд 15 (И1): иконки тач-кнопок — SVG из спрайта (были юникод-глифы и
+   эмодзи), главная «Атака» крупнее и золотая — палец находит её не глядя. */
+.touch-btn svg.ico { width: 52%; height: 52%; color: var(--gold-text); }
+.touch-btn.touch-main { width: var(--tm, 19vmin); height: var(--tm, 19vmin); background: var(--grain), linear-gradient(var(--cta-1), var(--cta-2)); box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 4px 0 0 var(--cta-shadow), 0 6px 10px rgba(0,0,0,.35); }
+.touch-btn.touch-main svg.ico { color: #fff6d8; }
+.touch-actions { align-items: flex-end; }
 /* Кулдаун атаки/спец-удара/кирки — прямо на самих кнопках (раунд 5), не на
    перках нижней панели (та скрыта на мобильном, см. ниже). */
 .cd-overlay-round {
@@ -981,7 +1151,7 @@ body.theme-blue-red {
      специфичнее голого .menu-btn, поэтому сохраняют иерархию размеров
      даже на низком экране, не только на десктопе). */
   .menu-btn.primary-big { min-height: 46px; font-size: 1.25em; padding: .35em 1.4em; }
-  .menu-btn.small { min-height: 28px; padding: .2em .7em; font-size: .78em; }
+  .menu-btn.small { min-height: 28px; padding: .2em .7em; font-size: max(12px, .78em); }
   .shop-list { max-height: none; padding: .4em; gap: .35em; }
   .shop-item { padding: .35em .6em; min-height: 40px; gap: .15em; }
   .shop-section-title { margin: .3em 0 -.05em; padding: .1em .2em; }
@@ -992,7 +1162,7 @@ body.theme-blue-red {
      столбца — та же суммарная информация, но одна строка высоты вместо
      двух. */
   .ad-reward-row { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: .3em; }
-  .ad-reward-btn { font-size: .78em; padding: .3em .7em; min-height: 34px; }
+  .ad-reward-btn { font-size: max(12px, .78em); padding: .3em .7em; min-height: 34px; }
   .result-reward-value { font-size: 1.3em; }
 }
 
@@ -1015,3 +1185,505 @@ body.theme-blue-red {
 [dir="rtl"] .playlist-name {
   text-align: right;
 }
+
+/* r15 И4 */
+/* ===================================================================
+   Раунд 15, И4 «Первые 60 секунд и отдача» (ТЗ_КАЧЕСТВО_CRAZYGAMES):
+   туториал миссии 1 (js/tutorial.js), финал боя, экран итога со звёздами.
+   =================================================================== */
+
+/* --- Туториал: надпись ≤4 слов + прыгающая стрелка на цель --- */
+.tut-layer { position: absolute; inset: 0; pointer-events: none; z-index: 7; overflow: hidden; }
+.tut-bubble, .tut-arrow { position: absolute; left: 0; top: 0; will-change: transform; }
+.tut-bubble {
+  display: inline-flex; align-items: center; gap: .45em; white-space: nowrap;
+  padding: .3em .8em; border-radius: 999px; border: 3px solid var(--ink);
+  background: linear-gradient(#fff6d8, #ffd77a); color: #3a2200;
+  word-spacing: .16em; font-family: 'Lilita One', 'Fredoka', sans-serif; font-size: max(16px, 3.3vh); letter-spacing: .02em;
+  box-shadow: 0 4px 0 0 #7a4a10, 0 8px 18px rgba(0,0,0,.4);
+}
+.tut-keys { display: inline-flex; gap: .25em; }
+.tut-keys kbd {
+  display: inline-block; min-width: 1.5em; padding: .05em .4em; text-align: center;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: .72em; line-height: 1.4;
+  background: #fff; color: #2a1608; border: 2px solid #2a1608; border-radius: .35em;
+  box-shadow: 0 2px 0 #2a1608;
+}
+.tut-swipe { display: inline-flex; width: 2.1em; color: #2a1608; animation: tutSwipe 1s ease-in-out infinite; }
+.tut-swipe svg { width: 100%; height: auto; }
+.tut-arrow { width: max(30px, 6vh); }
+.tut-arrow svg { display: block; width: 100%; height: auto; animation: tutBob .7s ease-in-out infinite alternate; filter: drop-shadow(0 3px 3px rgba(0,0,0,.45)); }
+.tut-layer.tut-in .tut-text { animation: tutPop .35s cubic-bezier(.34,1.56,.64,1); display: inline-block; }
+.tut-layer.tut-done .tut-bubble, .tut-layer.tut-done .tut-arrow { opacity: 0; transition: opacity .3s ease; }
+@keyframes tutBob { from { transform: translateY(-10px); } to { transform: translateY(0); } }
+@keyframes tutPop { 0% { transform: scale(.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes tutSwipe { 0%, 100% { transform: translateX(-4px); } 50% { transform: translateX(4px); } }
+
+/* --- Финал боя: HUD уходит, сцена крупным планом --- */
+#hud .hud-bottom, #hud .hud-top { transition: opacity .35s ease; }
+#hud.r15-finale .hud-bottom, #hud.r15-finale .hud-top { opacity: 0; pointer-events: none; }
+
+/* --- Экран итога --- */
+#resultCard { min-width: min(22em, 90vw); }
+#resultCard h2.result-title {
+  font-size: max(28px, 7.2vh); line-height: 1; padding: .05em .3em; margin: 0;
+  text-transform: uppercase; letter-spacing: .04em;
+  text-shadow: 0 3px 0 var(--ink), 0 0 .08em var(--ink), 0 6px 16px rgba(0,0,0,.55);
+  animation: resultTitleIn .5s cubic-bezier(.34,1.56,.64,1);
+}
+#resultCard.win h2.result-title { color: var(--gold-text); }
+#resultCard.lose h2.result-title { color: var(--alert-1); }
+@keyframes resultTitleIn { 0% { transform: scale(1.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+.result-stars { display: flex; align-items: flex-end; justify-content: center; gap: .25em; margin: -.1em 0 0; }
+.r-star { display: inline-block; width: max(34px, 7vh); height: max(34px, 7vh); color: #6b5a44; opacity: 0; animation: rStarIn .45s cubic-bezier(.34,1.56,.64,1) forwards; }
+.r-star:nth-child(2) { width: max(42px, 8.8vh); height: max(42px, 8.8vh); margin-bottom: .25em; }
+.r-star svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 3px 0 rgba(0,0,0,.45)); }
+.r-star.on { color: #ffd23a; }
+.r-star.on svg { filter: drop-shadow(0 3px 0 rgba(0,0,0,.45)) drop-shadow(0 0 8px rgba(255,210,58,.75)); }
+@keyframes rStarIn {
+  0% { opacity: 0; transform: scale(2.2) rotate(-25deg); }
+  60% { opacity: 1; transform: scale(.9) rotate(6deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+.result-reward.counted .result-reward-value { animation: rewardPulse .35s ease-out; }
+@keyframes rewardPulse { 0% { transform: scale(1); } 45% { transform: scale(1.22); } 100% { transform: scale(1); } }
+
+#resultText.result-tip {
+  margin: 0; padding: .3em .9em; border-radius: 999px; max-width: 30em;
+  background: rgba(0,0,0,.28); color: var(--paper); font-size: max(14px, 2.4vh);
+}
+
+/* Главная кнопка — первая и крупная; реклама x2 — вторичная под ней;
+   «Магазин» / «В меню» — мелкие в ряд. */
+#resultCard .menu-btn.result-main { font-size: max(20px, 3.6vh); min-height: max(52px, 8.5vh); padding: .4em 2.6em; min-width: 9em; }
+#resultCard .ad-reward-row { margin: 0; }
+#resultCard .ad-reward-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4em;
+  font-size: max(13px, 2.2vh); min-height: 0; padding: .35em 1.1em;
+  box-shadow: 0 4px 0 0 #0e5c4a, 0 6px 12px rgba(0,0,0,.35);
+}
+#resultCard .ad-reward-btn .ad-ico { width: 1.25em; height: 1.25em; flex-shrink: 0; }
+.result-minor-row { display: flex; gap: .6em; justify-content: center; flex-wrap: wrap; margin-top: .1em; }
+.result-minor-row .menu-btn.small { min-width: 7em; }
+#resultCard .result-minor-row .menu-btn.as-main {
+  background: linear-gradient(var(--cta-1), var(--cta-2)); color: #4a2c00; text-shadow: 0 1px 0 rgba(255,255,255,.4);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,.18), 0 6px 0 0 var(--cta-shadow), 0 10px 18px rgba(0,0,0,.45);
+  font-size: max(18px, 3.2vh); min-height: max(48px, 8vh); padding: .35em 2em;
+}
+
+@media (max-height: 460px) {
+  #resultCard h2.result-title { font-size: max(26px, 9vh); padding: 0 .3em; }
+  #resultCard .menu-btn.result-main { font-size: 1.1em; min-height: 40px; padding: .25em 2em; }
+  #resultCard .ad-reward-btn { font-size: max(12px, .78em); min-height: 30px; padding: .2em .8em; }
+  .r-star { width: 30px; height: 30px; }
+  .r-star:nth-child(2) { width: 36px; height: 36px; }
+  #resultText.result-tip { font-size: .8em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tut-arrow svg, .tut-swipe { animation: none; }
+}
+
+/* r15 И10 */
+/* --- Разовый тост «эпоха сбрасывается» (js/tutorial.js, ageTipTick) --- */
+.age-tip {
+  position: absolute; left: 50%; top: 17%; z-index: 7; pointer-events: none;
+  transform: translateX(-50%); max-width: min(92vw, 36em);
+  display: flex; align-items: center; gap: .55em;
+  padding: .5em 1.1em; border-radius: 999px; border: 3px solid var(--ink);
+  background: linear-gradient(#fff6d8, #ffd77a); color: #3a2200;
+  font-family: 'Lilita One', 'Fredoka', sans-serif; word-spacing: .16em; letter-spacing: .02em;
+  font-size: max(15px, 3vh); line-height: 1.2; text-align: center;
+  box-shadow: 0 4px 0 0 #7a4a10, 0 10px 22px rgba(0,0,0,.45);
+  animation: ageTipIn .45s cubic-bezier(.34,1.56,.64,1);
+  transition: opacity .35s ease;
+}
+.age-tip svg.ico { width: 1.5em; height: 1.5em; flex-shrink: 0; color: #e0a030; vertical-align: 0; }
+.age-tip.out { opacity: 0; }
+@keyframes ageTipIn { 0% { transform: translateX(-50%) translateY(-14px) scale(.8); opacity: 0; } 100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; } }
+
+/* --- Праздник победы: лучи за карточкой, пульс звёзд, крупные кристаллы,
+       конфетти — канвас #confettiCanvas поверх (game.js, startConfetti) --- */
+#screenResult { overflow: hidden; }
+.result-rays {
+  position: absolute; left: 50%; top: 50%; width: 170vmax; height: 170vmax; z-index: 0;
+  margin: -85vmax 0 0 -85vmax; pointer-events: none; opacity: 0;
+  background: repeating-conic-gradient(from 0deg, rgba(255,226,140,.26) 0deg 7deg, rgba(255,226,140,0) 7deg 20deg);
+  -webkit-mask-image: radial-gradient(circle, #000 0, rgba(0,0,0,.85) 14%, transparent 42%);
+  mask-image: radial-gradient(circle, #000 0, rgba(0,0,0,.85) 14%, transparent 42%);
+}
+#screenResult.celebrate .result-rays { opacity: 1; animation: raysSpin 26s linear infinite, raysFade .6s ease-out; }
+@keyframes raysSpin { to { transform: rotate(360deg); } }
+@keyframes raysFade { from { opacity: 0; } to { opacity: 1; } }
+#screenResult #resultCard { position: relative; z-index: 2; }
+/* Конфетти под карточкой: не перечёркивает текст кнопок «Далее»/«x2». */
+#confettiCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+#screenResult.celebrate .result-reward-value { font-size: 2.5em; color: #bff0ff; text-shadow: 0 3px 0 var(--ink), 0 0 14px rgba(111,216,250,.6), 0 6px 14px rgba(0,0,0,.5); }
+#screenResult.celebrate .result-reward-label { font-size: max(13px, .95em); opacity: .95; }
+.r-star.on { animation: rStarIn .45s cubic-bezier(.34,1.56,.64,1) forwards, rStarPulse 1.5s ease-in-out infinite; }
+@keyframes rStarPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+/* Реклама x2 — появляется, когда счётчик кристаллов докрутился: на экране
+   никогда нет «+4» рядом с обещанием «x2 (+10)» (куратор, окно поражения). */
+#resultAdRow.ad-row-in { animation: adRowIn .35s ease-out both; }
+@keyframes adRowIn { from { opacity: 0; transform: translateY(8px); visibility: hidden; } to { opacity: 1; transform: none; visibility: visible; } }
+@media (max-height: 460px) {
+  #screenResult.celebrate .result-reward-value { font-size: 1.9em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #screenResult.celebrate .result-rays { animation: raysFade .6s ease-out; }
+  .r-star.on { animation: rStarIn .45s ease forwards; }
+}
+
+/* --- Карта глав: запертые главы читаемы (≥13px, светлый текст) --- */
+.chapter-row.chapter-locked { opacity: 1; }
+.chapter-row.chapter-locked .chapter-label {
+  font-size: max(13px, .95em); font-weight: 600; opacity: 1; color: #e2d4b4;
+  background: rgba(0,0,0,.26); border-color: rgba(255,225,180,.3);
+}
+.chapter-row.chapter-locked .chapter-label svg.ico { color: #d2bf98; }
+.chapter-label { font-size: max(13px, .9em); }
+
+/* r15 И12 */
+/* ===================================================================
+   Раунд 15, И12 — замечания куратора CrazyGames №3 по интерфейсу.
+   Блок в самом конце файла: побеждает и базовые правила, и компактный
+   режим @media (max-height: 460px) выше (тот же урок, что в его шапке).
+   =================================================================== */
+
+/* --- П3: любой видимый текст ≥12px на 800×450 (база .screen там 13px,
+       и все .75–.85em-подписи уходили в 9.8–11px). Пол — max(12px, …),
+       на больших экранах пропорции прежние. --- */
+.shop-item .si-desc { font-size: max(12px, .8em); }
+.si-tier { font-size: max(12px, .78em); }
+.si-stat { font-size: max(12px, .82em); }
+.shop-section-title { font-size: max(12.5px, .85em); }
+.shop-locked-strip { font-size: max(12px, .8em); }
+.shop-note { font-size: max(12px, .75em); }
+.shop-item .si-buy { font-size: max(13px, .9em); }
+.time-select-group .si-buy, .toggle-inline { font-size: max(12px, .85em); }
+.icon-btn.small { font-size: max(12px, .8em); }
+.result-reward-label { font-size: max(12px, .85em); }
+#resultText.result-tip { font-size: max(13px, 2.4vh); }
+.tut-keys kbd { font-size: max(13px, .72em); } /* r15 И18 */
+.link-btn { font-size: max(12px, .75em); }
+.ad-test-box p { font-size: max(12px, .85em); }
+@media (max-height: 460px) {
+  .panel-card h2, .popup-card h2 { font-size: max(14px, .95em); }
+  .menu-btn { font-size: max(12px, .85em); }
+  #resultText.result-tip { font-size: 13px; }
+  #resultCard .ad-reward-btn, .ad-reward-btn { font-size: max(12.5px, .78em); }
+  .shop-header-row .shop-currency { font-size: max(12px, .85em); }
+}
+/* Иконки из SVG-спрайта вместо эмодзи в строках справки (П10). */
+.shop-section-title svg.ico { width: 1.1em; height: 1.1em; margin-right: .35em; vertical-align: -.2em; }
+svg.ico.ico-inline { width: 1.25em; height: 1.25em; vertical-align: -.28em; margin: 0 .1em; }
+
+/* --- П8: пауза — заметная панель, кнопки ≥48px, текст ≥15px --- */
+#screenPause .popup-card {
+  min-width: min(92vw, 23em); padding: 1.1em 1.6em 1.3em; gap: .75em;
+}
+#screenPause .popup-card h2 { font-size: max(22px, 1.6em); padding: .1em .8em; }
+#screenPause .menu-btn { min-height: 50px; font-size: max(16px, 1.05em); padding: .35em 1.2em; width: 100%; }
+#screenPause #btnResume { min-height: 56px; font-size: max(19px, 1.3em); }
+#screenPause .mute-row { width: 100%; gap: .6em; }
+#screenPause .mute-row .menu-btn { font-size: max(15px, .95em); padding: .3em .6em; }
+/* Справка — шапка закреплена (как у магазина): заголовок и крестик всегда
+   на виду, прокручивается только список. */
+#screenHelp .panel-card { padding-top: 0; }
+.help-header-row {
+  display: flex; align-items: center; justify-content: center; width: 100%; flex-shrink: 0;
+  position: sticky; top: 0; z-index: 2; margin: 0 -1.4em; padding: .5em 3.8em .4em; min-height: 58px;
+  background: var(--grain), linear-gradient(var(--royal-1), var(--royal-3));
+  border-bottom: 2px solid var(--edge-light); border-radius: var(--r-xl) var(--r-xl) 0 0;
+}
+.help-header-row h2, #screenHelp .help-header-row h2 { margin: 0; font-size: max(17px, 1.25em); padding: 0 .6em; }
+.help-close-btn { position: absolute; right: .6em; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; }
+.help-close-btn svg.ico { width: 50%; height: 50%; color: var(--paper); }
+@media (hover: hover) and (pointer: fine) { .help-close-btn:hover { transform: translateY(-50%) scale(1.07); } }
+.help-close-btn:active { transform: translateY(-50%) scale(.95); }
+@media (max-height: 460px) { .help-header-row { padding: .35em 3.6em .3em; min-height: 54px; } }
+
+/* --- П5: «Воскресить 30», когда золота не хватает — приглушённая кнопка
+       с заливкой накопленного и недостачей «(−12)». --- */
+.hero-revive-box .menu-btn.is-short {
+  background:
+    linear-gradient(90deg, rgba(255,215,122,.38) 0 var(--fill, 0%), transparent var(--fill, 0%)),
+    linear-gradient(#6a5a48, #3e3226);
+  color: #cbbd9f; text-shadow: 0 1px 1px rgba(0,0,0,.6); cursor: not-allowed;
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,.25), 0 4px 0 0 #241a10, 0 6px 12px rgba(0,0,0,.35);
+  filter: none; transform: none;
+}
+.hero-revive-box .menu-btn.is-short .gold-dot { filter: grayscale(.6) brightness(.85); }
+.buyback-short { color: #ffb08a; word-spacing: 0; white-space: nowrap; }
+/* r15 И18: «Воскресить 30 · не хватает 3» — на таче (кнопка под своей
+   полосой HP, узкая колонка) недостача второй строкой внутри кнопки. */
+.bb-main { display: inline-flex; align-items: center; gap: .3em; white-space: nowrap; }
+.hero-slot-top .hero-revive-box { flex-shrink: 0; }
+.hero-revive-box.in-slot .menu-btn.is-short { flex-direction: column; justify-content: center; gap: 0; line-height: 1.08; padding-top: .12em; padding-bottom: .15em; }
+.hero-revive-box.in-slot .buyback-short { text-align: center; font-size: 13px; word-spacing: .25em; }
+.hero-revive-box.in-slot .bs-sep { display: none; }
+.hero-revive-box .menu-btn:not(.is-short) .buyback-short { display: none; }
+@keyframes buybackDeny { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.hero-revive-box .menu-btn.denied { animation: buybackDeny .2s; }
+
+/* --- П9: полоска у портрета героя — с подписью «HP» (как у крепостей). --- */
+.hero-mini-bar-col { display: flex; flex-direction: column; align-items: flex-start; margin-left: -.55em; }
+.hero-mini-bar-col .bar-hp-hero { margin-left: 0; }
+.hero-mini-label {
+  padding-left: .75em; margin-bottom: .1em; line-height: 1;
+  font-family: 'Lilita One', 'Fredoka', sans-serif; font-size: max(13px, .72em); letter-spacing: .06em; color: #fff; /* r15 И18: 13px */
+  text-shadow: 0 1px 0 var(--ink), 1px 0 0 var(--ink), -1px 0 0 var(--ink), 0 0 3px rgba(0,0,0,.7);
+}
+.hero-mini.dead .hero-mini-label { color: #ffb08a; }
+
+/* --- П7: подсказки «Залп»/«Новая эра» — компактно у самой кнопки, не над
+       центром боя; сама кнопка подсвечена, пока висит подсказка. --- */
+.tut-layer.tut-brief .tut-arrow { width: max(22px, 4.4vh); }
+.tut-layer.tut-brief .tut-bubble { font-size: max(14px, 2.6vh); padding: .2em .65em; }
+@keyframes tutGlow { 0%,100% { box-shadow: 0 0 0 2px var(--gold-text), 0 0 10px 2px rgba(255,215,122,.55); } 50% { box-shadow: 0 0 0 3px #fff3c4, 0 0 20px 6px rgba(255,215,122,.9); } }
+.tool-btn.tut-glow { animation: tutGlow 1s ease-in-out infinite; }
+
+/* --- П6: ряд рекламы на итоге не держит пустое место до своего появления --- */
+#resultAdRow.ad-row-wait { display: none; }
+#resultAdRow.ad-row-in { animation: adRowGrow .35s ease-out both; }
+@keyframes adRowGrow { from { opacity: 0; transform: translateY(6px) scale(.96); } to { opacity: 1; transform: none; } }
+
+/* r15 И14 */
+/* --- Условия звёзд под звёздами на экране итога (game.js, renderStarGoals):
+       галочка — выполнено, пустой кружок — нет; текст ≥12px на 800×450. --- */
+.result-star-goals {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: .1em;
+  font-family: 'Fredoka', 'Segoe UI', sans-serif; font-weight: 600;
+  font-size: max(13px, 2.3vh); line-height: 1.2;
+}
+.result-star-goals li {
+  display: flex; align-items: center; gap: .4em;
+  opacity: 0; animation: starGoalIn .3s ease-out forwards;
+}
+.result-star-goals svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
+.result-star-goals li.ok { color: #fff3cf; }
+.result-star-goals li.ok svg circle { fill: #3bb26b; stroke: var(--ink); stroke-width: 1.5; }
+.result-star-goals li.ok svg path { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.result-star-goals li.no { color: rgba(243,231,200,.72); }
+.result-star-goals li.no svg circle { fill: rgba(0,0,0,.25); stroke: rgba(243,231,200,.55); stroke-width: 1.6; }
+@keyframes starGoalIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@media (max-height: 460px) {
+  .result-star-goals { font-size: 12.5px; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .result-star-goals li { animation: none; opacity: 1; }
+}
+
+/* r15 И13 */
+/* Предупреждение о копящемся золоте (куратор №4: «штраф за копление не виден»):
+   плашка над счётчиком золота, когда золота > 70 % порога GOLD_HOARD
+   (game.js, updateHud); сам счётчик пульсирует красным. */
+.gold-row { position: relative; }
+/* r15 И20 (куратор №7: «счётчик золота висит над полем боя и перекрывает
+   юнитов»): тёмная полупрозрачная капсула под счётчиком — читается как
+   элемент интерфейса, а не как надпись поверх бойцов; фигуры за ней видны.
+   Пульс предупреждения/штрафа (goldWarnPulse/goldHoardPulse) по-прежнему
+   перекрашивает фон капсулы. */
+.gold-row {
+  background: rgba(26,18,10,.58); border: 1.5px solid rgba(255,215,122,.3);
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+  padding: .02em .55em .02em .35em; font-size: 1.4em;
+}
+/* r15 И16 (куратор №5: «плашка „Spend gold…“ висит над полем»): не над
+   счётчиком, а СПРАВА от него, по центру строки золота — счётчик не
+   сдвигается. Постоянно — 2–3 слова (hud.goldSpendShort/goldHoardShort),
+   полная фраза — только первые 4 с (.full, updateGoldWarn), с переносом в
+   пределах --warn-max (на таче — до тач-кнопок, layoutHudBottomRow). */
+.gold-warn {
+  position: absolute; left: calc(100% + 4px); top: 50%; transform: translateY(-50%);
+  width: max-content; max-width: var(--warn-max, 240px); white-space: nowrap; text-align: left;
+  font-family: 'Fredoka', 'Segoe UI', sans-serif; font-weight: 700; font-size: max(12px, .5em); line-height: 1.2;
+  color: #fff4e6; text-shadow: 0 1px 0 rgba(0,0,0,.55); word-spacing: normal; letter-spacing: 0;
+  background: linear-gradient(#d4492a, #9c2412); border: 2px solid var(--ink); border-radius: 10px;
+  padding: .2em .6em; box-shadow: 0 2px 0 rgba(0,0,0,.35); pointer-events: none;
+  animation: goldWarnIn .25s ease-out;
+}
+.gold-warn.full { white-space: normal; }
+.gold-warn[hidden] { display: none; }
+.gold-warn::after {
+  content: ''; position: absolute; right: 100%; top: 50%; transform: translateY(-50%);
+  border: 5px solid transparent; border-right-color: #b8331a;
+}
+@keyframes goldWarnIn { from { opacity: 0; transform: translate(-6px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+@keyframes goldWarnPulse { 0%,100% { background: rgba(200,64,30,.15); } 50% { background: rgba(200,64,30,.55); } }
+.gold-row.gold-warn-on { color: #ffd0b8; animation: goldWarnPulse 1s ease-in-out infinite; }
+.gold-row.gold-warn-on.gold-hoard-flash { animation: goldHoardPulse .35s ease-in-out 4; } /* сработавший штраф важнее */
+@media (prefers-reduced-motion: reduce) {
+  .gold-warn { animation: none; }
+  .gold-row.gold-warn-on { animation: none; background: rgba(200,64,30,.4); }
+}
+
+/* r15 И16 */
+/* --- Нижний ряд на таче: если тулбар не влез между джойстиком и веером
+       тач-кнопок (layoutHudBottomRow меряет scrollWidth), сначала кнопки
+       44px с узкими зазорами (.row-compact), потом «Залп»/«Эра» — строкой
+       НАД тулбаром (.row-stack, wrap-reverse). Тач-цели не меньше 44px. --- */
+/* «Залп»/«Эра» — ширина по подписи (DE «Zeitalter», ES «Andanada», EN
+   «Volley» не влезали в 44–58px и обрезались), не уже соседних кнопок. */
+#volleyBtn, #ageBtn { width: auto; padding-left: .35em; padding-right: .35em; }
+#volleyBtn .tool-cost, #ageBtn .tool-cost { white-space: nowrap; }
+.hud-bottom-row.row-compact { gap: 4px; }
+.hud-bottom-row.row-compact .toolbar { gap: 3px; }
+.hud-bottom-row.row-compact .tool-btn { min-width: 44px; min-height: 44px; width: 44px; height: 46px; }
+.hud-bottom-row.row-compact #volleyBtn, .hud-bottom-row.row-compact #ageBtn { width: auto; padding-left: 4px; padding-right: 4px; }
+.hud-bottom-row.row-compact .tool-icon-canvas { width: 28px; height: 31px; }
+.hud-bottom-row.row-stack { flex-wrap: wrap-reverse; row-gap: 6px; align-content: flex-end; }
+.hud-bottom-row.row-stack .toolbar { flex-basis: 100%; justify-content: center; }
+/* r15 И20 (куратор №7: на 667×375 «Volley»/«Age» — вторым рядом над полем):
+   когда ряд не влезает, «Залп» и «Эра» — в правом тач-кластере круглыми
+   кнопками над «Вихрь»/«Кирка» (placeVolleyAge в game.js). Подпись скрыта,
+   как у остальных тач-кнопок; у «Эры» — кольцо опыта по кромке круга. */
+.touch-actions > #volleyBtn, .touch-actions > #ageBtn {
+  position: absolute; pointer-events: auto;
+  width: var(--tb); height: var(--tb); min-width: 44px; min-height: 44px;
+  border-radius: 50%; padding: 0; font-size: 1em;
+  bottom: calc(var(--tb) + var(--tg));
+}
+.touch-actions > #volleyBtn { right: calc(var(--tm) + var(--tg)); }
+.touch-actions > #ageBtn { right: calc(var(--tm) + 2 * var(--tg) + var(--tb)); }
+.touch-actions > #volleyBtn .tool-cost, .touch-actions > #ageBtn .tool-cost { display: none; }
+.touch-actions > #volleyBtn .tool-icon svg.ico, .touch-actions > #ageBtn .tool-icon svg.ico { width: 26px; height: 26px; }
+.touch-actions > #volleyBtn .cd-overlay { border-radius: 0; }
+
+/* --- «Крепость атакуют!» (updateFortAlert в game.js): тост под
+       заголовком, мигание полосы HP своей крепости, лёгкий красный край
+       экрана со стороны своей крепости. Ничего не ловит касания. --- */
+.fort-alert {
+  position: absolute; top: calc(100% - .1em); left: 50%; transform: translateX(-50%); z-index: 6;
+  pointer-events: none; white-space: nowrap;
+  font-family: 'Lilita One', 'Fredoka', sans-serif; font-size: max(14px, 1em); letter-spacing: .03em; word-spacing: .16em;
+  color: #fff4e6; text-shadow: 0 1px 0 var(--ink), 1px 0 0 var(--ink), -1px 0 0 var(--ink);
+  background: linear-gradient(#d4492a, #8e1f10); border: 2px solid var(--ink); border-radius: 999px;
+  padding: .2em .9em .25em; box-shadow: 0 3px 0 rgba(0,0,0,.35), 0 0 14px rgba(220,60,30,.55);
+}
+.fort-alert.show { animation: fortAlertIn 2.4s ease-out both; }
+@keyframes fortAlertIn {
+  0% { opacity: 0; transform: translate(-50%, -8px) scale(.85); }
+  8% { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
+  14% { transform: translate(-50%, 0) scale(1); }
+  82% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
+}
+@keyframes fortBarBlink { 0%,100% { box-shadow: 0 1px 3px rgba(0,0,0,.35); background: rgba(26,18,10,.55); } 50% { box-shadow: 0 0 10px 3px rgba(255,60,30,.85); background: rgba(200,40,20,.75); } }
+.core-player .bar.fort-hit { animation: fortBarBlink .3s ease-in-out 2; }
+/* r15 И18 (куратор №6: «полоса HP своей крепости оранжевая при 1000/1000»):
+   раньше filter стоял на классе .fort-hit, а класс снимался только
+   следующим ударом — после сигнала полоса так и оставалась оранжевой.
+   Теперь красный оттенок — только внутри анимации мигания, по её концу
+   заливка снова зелёная (и game.js снимает класс по animationend). */
+.core-player .bar.fort-hit .bar-fill { animation: fortFillBlink .3s ease-in-out 2; }
+@keyframes fortFillBlink { 0%,100% { filter: none; } 50% { filter: hue-rotate(-100deg) saturate(1.6); } }
+#fortEdge {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 14%; pointer-events: none; z-index: 3; opacity: 0;
+  background: linear-gradient(90deg, rgba(220,40,20,.42), rgba(220,40,20,0));
+}
+#fortEdge.pulse { animation: fortEdgePulse 1.1s ease-in-out 2; }
+@keyframes fortEdgePulse { 0%,100% { opacity: 0; } 45% { opacity: 1; } }
+
+/* --- Заголовок миссии показывает ТЕКУЩУЮ эпоху игрока — при «Новой эре»
+       короткая вспышка (updateHudStatic). --- */
+.mission-title.age-pop { animation: titleAgePop .9s ease-out; }
+/* Эпоха в заголовке теперь меняется в бою — длинные «Бронзовый век»,
+   «Industriezeitalter» на телефоне обрезались многоточием: до 2 строк. */
+/* r15 И18 (куратор №6: «„Mission 3 — Bronze Age“ переносится на 2 строки на
+   667×375»): снова ОДНА строка. fitMissionTitle() в game.js ужимает кегль
+   (не мельче 12px) и межбуквенные отступы, пока строка не влезет; если не
+   влезла и на 12px — многоточие. */
+.mission-title {
+  white-space: nowrap; line-height: 1.15; text-overflow: ellipsis; overflow: hidden;
+}
+.mission-title.fit-tight { letter-spacing: 0; word-spacing: 0; padding-left: .15em; padding-right: .15em; }
+/* Узкий альбомный телефон: заголовку — больше места между полосами HP
+   («Миссия 13 — Индустриальный век» на 667×375 иначе не влезал и в 12px). */
+@media (max-width: 780px) and (orientation: landscape) {
+  .hud-top { gap: .35em; }
+  .core-box { width: 24.5%; }
+}
+@keyframes titleAgePop { 0% { transform: scale(1); color: #fff; } 25% { transform: scale(1.18); color: #fff3c4; } 100% { transform: scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .fort-alert.show { animation: none; }
+  #fortEdge.pulse { animation: none; }
+  .mission-title.age-pop { animation: none; }
+}
+
+/* --- r15 И18: строка цели эпох под заголовком на старте боя
+       (showAgeGoal/updateAgeGoal в game.js) — «Старт: Каменный век → дойди
+       до Железного!». Мелко, ≥13px, не ловит касания, тает через ~5 с. --- */
+.age-goal {
+  position: absolute; top: 2.2em; left: 50%; transform: translateX(-50%); z-index: 5;
+  pointer-events: none; white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis;
+  font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: max(13px, .82em); line-height: 1.25;
+  color: #fff4e0; text-shadow: 0 1px 0 var(--ink), 1px 0 0 var(--ink), -1px 0 0 var(--ink);
+  background: rgba(26,18,10,.55); border-radius: 999px; padding: .12em .8em .15em;
+  opacity: 1; transition: opacity .4s ease;
+  animation: ageGoalIn .35s ease-out backwards;
+}
+.age-goal.out { opacity: 0; }
+@keyframes ageGoalIn { from { opacity: 0; transform: translate(-50%, -4px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .age-goal { animation: none; } }
+
+/* --- r15 И20 п.8: карта глав — «Назад» в закреплённой шапке (как у
+       магазина: .shop-header-row sticky, свой фон), без верхнего отступа
+       карточки — иначе над прилипшей шапкой просвечивал бы список. --- */
+#screenMissions .panel-card { padding-top: 0; }
+.chapters-header-row { width: calc(100% + 2.8em); }
+@media (max-height: 460px) {
+  #screenMissions .shop-header-row { margin: 0 -.8em; padding: .45em .8em .4em; width: calc(100% + 1.6em); }
+}
+/* Узел карты глав: невидимый круг-«мишень» r=27 (chapterRowSVG) — цель
+   касания ≥44px при визуальном круге 34px. */
+.trail-node-svg .node-hit { fill: transparent; stroke: none; }
+.trail-node-svg:not(.locked):hover .node-hit, .trail-node-svg:not(.locked):active .node-hit { transform: none; }
+
+/* --- r15 И20 п.9 (куратор №7: «мелкие тач-цели: Back в магазине 48×28,
+       вкладки магазина 31, Playlist 28»): на тач-экранах все интерактивные
+       элементы меню/настроек/магазина/глав/плейлиста/паузы/справки/итога —
+       не ниже 44px (проверка: tmp/i20/touch_targets.py). Блок в конце файла —
+       побеждает компактный режим @media (max-height: 460px) выше. --- */
+@media (pointer: coarse) {
+  .menu-btn, .menu-btn.small, .menu-btn.primary-big, .shop-tab, .si-buy, .shop-item .si-buy,
+  .time-select-group .si-buy, .toggle-inline, .icon-btn, .icon-btn.small, .setting-row,
+  .ad-reward-btn, .link-btn { min-height: 44px; }
+  .menu-btn.small, .icon-btn.small, .si-buy { min-width: 44px; }
+  #screenMenu .menu-btn.primary-big { min-height: 50px; }
+  #screenMenu .menu-row .menu-btn { min-height: 44px; }
+  .shop-tab { padding-top: .3em; padding-bottom: .3em; }
+  /* переключатель трека в плейлисте — крупнее (56×44), бегунок по размеру */
+  .playlist-row .toggle-switch { width: 56px; height: 44px; }
+  .playlist-row .toggle-switch::after { width: 36px; height: 36px; top: 2px; left: 2px; }
+  .playlist-row .toggle-switch.on::after { transform: translateX(12px); }
+}
+
+/* r15 И21 */
+/* --- П6 (куратор №8: «на итоге на телефоне „Next“ 40px, „Watch ad“ 30px»):
+       правила #resultCard (компактный режим max-height: 460px) сильнее
+       общего пола 44px И20 — здесь тем же весом, в конце файла. Карточка
+       влезает в 667×375 (проверка: tmp/i21/result_fit.py). --- */
+@media (pointer: coarse) {
+  #resultCard .menu-btn.result-main, #resultCard .ad-reward-btn,
+  #resultCard .result-minor-row .menu-btn { min-height: 44px; }
+}
+/* --- П7 (куратор №8: «кольцо „Эры“ закрывает подпись — „Aɢe“»): прогресс
+       опыта — рамкой по кромке кнопки (conic-gradient по --age-p, game.js
+       updateHudR15), середина прозрачна (маска) — подпись и иконка чистые.
+       В тач-кластере кнопка круглая — рамка тоже. --- */
+.age-ring {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  border-radius: calc(var(--r-lg) - 3px); padding: 3px;
+  background: conic-gradient(var(--gold-text, #f6c94a) calc(var(--age-p, 0) * 360deg), rgba(0,0,0,.4) 0);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.touch-actions > #ageBtn .age-ring { border-radius: 50%; }
+#ageBtn .tool-icon { position: relative; z-index: 1; }
+/* компактная кнопка 44×46: подпись на 2px выше — строка не заходит на рамку */
+.hud-bottom-row.row-compact #ageBtn { padding-top: 0; padding-bottom: 4px; }

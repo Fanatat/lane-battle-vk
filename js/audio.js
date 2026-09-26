@@ -53,7 +53,7 @@ const SFX = (() => {
     return ctx;
   }
 
-  // Загрузка ~390 КБ после показа первого экрана, не блокирует старт; пока
+  // Загрузка ~270 КБ (56 файлов) после показа первого экрана, не блокирует старт; пока
   // файл не пришёл, его звук просто пропускается.
   function preload() {
     if (loadStarted) return;
@@ -168,9 +168,48 @@ const MUSIC = (() => {
   let platformMuted = false;
   let baseVolume = 0.7;
   let unitVolumeMult = 1; // множитель от числа юнитов на поле (см. setUnitCount)
-  let current = null; // { trackId, buffer, source, gain, startedAt, offset, pausedOffset, adPaused, fading, manualStop, ended }
+  let current = null; // { trackId, buffer, source, gain, startedAt, offset, fading, manualStop, stopped, audible }
   let endedCb = null;
-  const bufferCache = new Map(); // file -> Promise<AudioBuffer>, чтобы не перекачивать/передекодировать один трек на каждый play()
+
+  // Ленивая загрузка (раунд 15, П5 — требования CrazyGames «загрузка < 10 с»,
+  // «сборка < 20 МБ»). Раньше menu_theme (2,9 МБ) качался сразу при показе
+  // первого экрана и на медленной сети забирал канал у всего остального, а
+  // боевой трек (6,8 МБ) при первом запуске грузился в самом начале боя.
+  // Теперь:
+  //  - трек меню ждёт «ворота»: первый экран + MENU_GATE_DELAY_MS или первый
+  //    жест игрока (до жеста AudioContext всё равно молчит, см. ensureCtx);
+  //  - боевой трек и стинги качаются сразу при вызове play() — игрок уже в
+  //    игре, это «фон после первого экрана»;
+  //  - пока новый трек не готов, старый доигрывает (не дольше
+  //    HANDOVER_WAIT_MS) — переход без провала в тишину;
+  //  - в меню, когда его трек уже играет, в фоне докачивается боевой трек
+  //    (только байты, без декодирования), в бою — стинги победы/поражения.
+  // Ошибки сети/декодирования не всплывают: трек просто не играет, при
+  // следующем play() загрузка повторяется.
+  const MENU_GATE_DELAY_MS = 1500;
+  const HANDOVER_WAIT_MS = 4000;
+  const PREFETCH_DELAY_MS = 2500;
+  // Декодированный трек в памяти — это PCM float32: ~40-100 МБ на трек в
+  // 2-5 минут. Держим не больше DECODED_MAX последних (меню + бой + стинг),
+  // сжатые байты остальных остаются в bytesCache (≤ 9 МБ на все треки) и
+  // декодируются заново за доли секунды.
+  const DECODED_MAX = 3;
+  const bytesCache = new Map(); // file -> Promise<ArrayBuffer> (сжатые байты mp3)
+  const decodedCache = new Map(); // file -> Promise<AudioBuffer>, порядок вставки = LRU
+  let gateOpen = false;
+  const gateWaiters = [];
+  function openGate() {
+    if (gateOpen) return;
+    gateOpen = true;
+    gateWaiters.splice(0).forEach((fn) => fn());
+  }
+  function whenGateOpen() {
+    return gateOpen ? Promise.resolve() : new Promise((res) => gateWaiters.push(res));
+  }
+  window.addEventListener('boot:firstscreen', () => setTimeout(openGate, MENU_GATE_DELAY_MS));
+  ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, openGate, { capture: true, once: true }));
+  // Страховка, если первый экран так и не был отмечен (сбой платформы).
+  window.addEventListener('load', () => setTimeout(openGate, 6000));
 
   function ensureCtx() {
     if (!ctx) {
@@ -204,13 +243,39 @@ const MUSIC = (() => {
   function effectiveVolume() {
     return (musicMuted || platformMuted) ? 0 : baseVolume * unitVolumeMult;
   }
-  function loadBuffer(file) {
-    if (!bufferCache.has(file)) {
-      bufferCache.set(file, fetch(file)
-        .then((r) => r.arrayBuffer())
-        .then((data) => ensureCtx().decodeAudioData(data)));
+  function fetchBytes(file, lowPriority) {
+    if (!bytesCache.has(file)) {
+      const p = fetch(file, lowPriority ? { priority: 'low' } : undefined)
+        .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); });
+      p.catch(() => bytesCache.delete(file)); // следующий запрос попробует снова
+      bytesCache.set(file, p);
     }
-    return bufferCache.get(file);
+    return bytesCache.get(file);
+  }
+  function prefetch(file) {
+    if (file) fetchBytes(file, true).catch(() => { /* фоновая докачка — молча */ });
+  }
+  function loadBuffer(file) {
+    if (decodedCache.has(file)) {
+      const hit = decodedCache.get(file);
+      decodedCache.delete(file); // LRU: в конец очереди
+      decodedCache.set(file, hit);
+      return hit;
+    }
+    // decodeAudioData «забирает» ArrayBuffer — декодируем копию, байты в
+    // кэше остаются для повторного декодирования после вытеснения.
+    const p = fetchBytes(file).then((data) => new Promise((res, rej) =>
+      ensureCtx().decodeAudioData(data.slice(0), res, rej)));
+    p.catch(() => decodedCache.delete(file));
+    decodedCache.set(file, p);
+    while (decodedCache.size > DECODED_MAX) decodedCache.delete(decodedCache.keys().next().value);
+    return p;
+  }
+  // Плавно гасит и освобождает запись трека.
+  function retire(entry, dur) {
+    if (!entry) return;
+    fadeGain(entry.gain, 0, dur);
+    setTimeout(() => { stopSource(entry); entry.gain.disconnect(); }, dur * 1000 + 50);
   }
   // Плавный переход gain-узла — через нативную автоматизацию AudioParam, не
   // через rAF-цикл (как было у <audio>.volume раньше): cancelScheduledValues
@@ -292,23 +357,47 @@ const MUSIC = (() => {
         fading: true,
         manualStop: false,
         stopped: false,
+        audible: null, // трек, который звучит, пока этот грузится (гасится при старте этого)
       };
       entry.gain.gain.value = 0;
       entry.gain.connect(masterGain);
       const old = current;
       current = entry;
-      loadBuffer(meta.file).then((buffer) => {
-        if (current !== entry) return; // успели переключиться на другой трек, пока этот декодировался
-        entry.buffer = buffer;
-        startSource(entry);
-        fadeGain(entry.gain, 1, dur);
-        setTimeout(() => { if (current === entry) entry.fading = false; }, dur * 1000 + 50);
-      });
       if (old) {
-        fadeGain(old.gain, 0, dur);
-        setTimeout(() => { stopSource(old); old.gain.disconnect(); }, dur * 1000 + 50);
+        if (old.source) {
+          entry.audible = old;
+        } else {
+          // Предыдущий ещё не успел зазвучать — звучит то, что было до него.
+          entry.audible = old.audible;
+          old.audible = null;
+          retire(old, 0.05);
+        }
       }
+      const handOver = () => { const a = entry.audible; entry.audible = null; if (a) retire(a, dur); };
+      setTimeout(handOver, HANDOVER_WAIT_MS);
+      (trackId === 'menu' ? whenGateOpen() : Promise.resolve())
+        .then(() => (current === entry ? loadBuffer(meta.file) : null))
+        .then((buffer) => {
+          if (!buffer || current !== entry) return; // успели переключиться на другой трек, пока этот грузился
+          entry.buffer = buffer;
+          startSource(entry);
+          fadeGain(entry.gain, 1, dur);
+          handOver();
+          setTimeout(() => { if (current === entry) entry.fading = false; }, dur * 1000 + 50);
+          // Фоновая докачка того, что понадобится следующим.
+          if (trackId === 'menu') {
+            setTimeout(() => prefetch(MUSIC_TRACKS.battle_theme && MUSIC_TRACKS.battle_theme.file), PREFETCH_DELAY_MS);
+          } else if (MUSIC_TRACKS[trackId]) {
+            setTimeout(() => { prefetch(EVENT_TRACKS.victory_sting.file); prefetch(EVENT_TRACKS.defeat_sting.file); }, PREFETCH_DELAY_MS);
+          }
+        })
+        .catch((e) => {
+          console.warn('[music] трек не загружен', meta.file, e);
+          if (current === entry) handOver();
+        });
     },
+    // Фоновая докачка трека заранее (только байты, без декодирования).
+    prefetch(trackId) { const meta = trackMeta(trackId); if (meta) prefetch(meta.file); },
     current() { return current ? current.trackId : null; },
     // Для живой диагностики (утренняя проверка баг-репортов) — реальное
     // состояние текущего трека, не только "назначенный" trackId.
@@ -319,9 +408,17 @@ const MUSIC = (() => {
         paused: !!ctx && ctx.state === 'suspended',
         volume: current.gain ? current.gain.gain.value : 0,
         currentTime: currentOffset(current),
+        loading: !current.buffer, // трек назначен, но ещё качается/декодируется
+        playing: !!current.source && !current.stopped,
       };
     },
-    stop() { if (current) { stopSource(current); current.gain.disconnect(); current = null; } },
+    stop() {
+      if (!current) return;
+      const a = current.audible;
+      current.audible = null;
+      if (a) retire(a, 0.05);
+      stopSource(current); current.gain.disconnect(); current = null;
+    },
     onEnded(cb) { endedCb = cb; },
     // Пауза/возобновление трека на время полноэкранной рекламы (требование
     // площадок — Яндекс п.4.7) и на время скрытой/неактивной вкладки

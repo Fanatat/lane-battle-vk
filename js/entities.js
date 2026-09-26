@@ -16,7 +16,40 @@ function countSpawn(world, team) {
   world.spawnCount[team]++;
 }
 
+// Раунд 15 (П6): текущая ступень эпохи команды внутри боя (0 — стартовая
+// эпоха миссии). world.ageStep заводит startMission; старые миры без поля
+// (тесты/промо-страницы) считаются ступенью 0.
+function teamAgeStep(world, team) {
+  return (world.ageStep && world.ageStep[team]) || 0;
+}
+// Опыт команды (для смены эпохи) — за убийства и урон по ядру противника.
+function addTeamXp(world, team, amount) {
+  if (!world.xp || !(amount > 0)) return;
+  world.xp[team] = (world.xp[team] || 0) + amount;
+}
+
+// Раунд 15 (И9): ряд по глубине для нового юнита (UNIT_LANES, data.js) —
+// по кругу order отдельно для каждой стороны: соседи по очереди выхода
+// идут в разных рядах, отряд из 3 — во всех трёх. Только отрисовка.
+function nextLane(world, team) {
+  const seq = world.laneSeq || (world.laneSeq = { player: 0, enemy: 0 });
+  const order = UNIT_LANES.order;
+  return order[(seq[team]++) % order.length];
+}
+
+// r15 И15: общий потолок живых врагов (mission.enemyAliveCap →
+// world.enemyAliveCap, ENEMY_ALIVE_CAP в data.js). Считаются все живые враги,
+// включая элиты и спецюнитов. Места нет — spawnUnit/spawnEliteUnit врага
+// возвращают null; очереди (отряд на выходе, трикл) ждут места сами (ai.js).
+function enemyAliveRoom(world) {
+  if (!world.enemyAliveCap) return Infinity;
+  let n = 0;
+  for (const u of world.units) if (u.team === 'enemy' && u.state !== 'dead') n++;
+  return world.enemyAliveCap - n;
+}
+
 function spawnUnit(world, team, typeId) {
+  if (team === 'enemy' && enemyAliveRoom(world) <= 0) return null; // r15 И15: потолок врагов
   const t = UNIT_TYPES[typeId];
   const dir = team === 'player' ? 1 : -1;
   const x = team === 'player' ? ARENA.laneMin + 6 : ARENA.laneMax - 6;
@@ -25,7 +58,15 @@ function spawnUnit(world, team, typeId) {
   // масштаб), урон — через dmgMult, читается в updateUnits при атаке
   // (тот же канал, что и бафф "Боевой клич", множители перемножаются).
   const enemyBuff = team === 'enemy' && progress.dlcHardModeActive;
-  const hpMult = enemyBuff ? SHOP.dlcHardMode.enemyUnitHpMult : 1;
+  const step = teamAgeStep(world, team);
+  const ageMult = ageStatMult(step); // раунд 15: эпоха в бою
+  // r15 И13: «новобранцы» врага в первых миссиях (mission.enemyRecruit →
+  // world.enemyRecruit): дешевле и слабее на бойца, но их больше — кадр не
+  // пустой, а сила армии на золото та же (hp×dmg ≈ cost²).
+  const rec = team === 'enemy' ? world.enemyRecruit : null;
+  // r15 И17: помощь после поражений подряд ослабляет и бойцов врага (game.js AI_HELP → world.enemyStatMult)
+  const help = team === 'enemy' ? (world.enemyStatMult || 1) : 1;
+  const hpMult = (enemyBuff ? SHOP.dlcHardMode.enemyUnitHpMult : 1) * ageMult * (rec ? rec.hp : 1) * help;
   const hp = Math.round(t.hp * hpMult);
   const u = {
     id: nextId(), kind: 'unit', team, typeId, dir,
@@ -34,7 +75,9 @@ function spawnUnit(world, team, typeId) {
     walkPhase: Math.random() * Math.PI * 2,
     attackTimer: 0, deathT: 0, hitFlash: 0, knockback: 0,
     targetRef: null, elite: false,
-    dmgMult: enemyBuff ? SHOP.dlcHardMode.enemyUnitDmgMult : 1,
+    dmgMult: (enemyBuff ? SHOP.dlcHardMode.enemyUnitDmgMult : 1) * ageMult * (rec ? rec.dmg : 1) * help,
+    cost: Math.round(ageUnitCost(typeId, step) * (rec ? rec.cost : 1)), // награда/опыт за убийство — от цены в его эпохе
+    lane: nextLane(world, team), // И9: ряд по глубине — только отрисовка
   };
   world.units.push(u);
   countSpawn(world, team);
@@ -43,21 +86,28 @@ function spawnUnit(world, team, typeId) {
 }
 
 function spawnEliteUnit(world, team, typeId, hpMult) {
+  if (team === 'enemy' && enemyAliveRoom(world) <= 0) return null; // r15 И15: потолок врагов
   const t = UNIT_TYPES[typeId];
   const dir = team === 'player' ? 1 : -1;
   const x = team === 'player' ? ARENA.laneMin + 6 : ARENA.laneMax - 6;
   const enemyBuff = team === 'enemy' && progress.dlcHardModeActive;
-  const totalHpMult = hpMult * (enemyBuff ? SHOP.dlcHardMode.enemyUnitHpMult : 1);
+  const step = teamAgeStep(world, team);
+  const ageMult = ageStatMult(step);
+  const help = team === 'enemy' ? (world.enemyStatMult || 1) : 1; // r15 И17: помощь после поражений
+  const totalHpMult = hpMult * (enemyBuff ? SHOP.dlcHardMode.enemyUnitHpMult : 1) * ageMult * help;
   const hp = Math.round(t.hp * totalHpMult);
   world.units.push({
     id: nextId(), kind: 'unit', team, typeId, dir,
     x, hp, maxHp: hp,
     state: 'walk', walkPhase: 0, attackTimer: 0, deathT: 0, hitFlash: 0, knockback: 0,
     targetRef: null, elite: true,
-    dmgMult: enemyBuff ? SHOP.dlcHardMode.enemyUnitDmgMult : 1,
+    dmgMult: (enemyBuff ? SHOP.dlcHardMode.enemyUnitDmgMult : 1) * ageMult * help,
+    cost: ageUnitCost(typeId, step),
+    lane: nextLane(world, team), // И9: ряд по глубине — только отрисовка
   });
   countSpawn(world, team);
   SFX.spawn();
+  return world.units[world.units.length - 1];
 }
 
 function aliveUnitsOf(world, team) {
@@ -67,6 +117,22 @@ function aliveUnitsOf(world, team) {
 function findTarget(world, unit) {
   const enemyTeam = unit.team === 'player' ? 'enemy' : 'player';
   const enemyCore = enemyTeam === 'player' ? world.playerCore : world.enemyCore;
+  // r15 И13 (куратор №4: «ни одного удара по своей крепости»): в первых
+  // миссиях (mission.enemySiege → world.enemySiege) вражеские стрелки,
+  // дошедшие до дальности выстрела по крепости игрока, бьют крепость, а не
+  // ближайшего бойца: прорыв к воротам ощущается «уколом» по крепости до
+  // того, как армия игрока проиграна целиком. Урон по крепости игрока в
+  // главе 1 и так снижен (playerCoreDmgMult).
+  if (world.enemySiege && unit.team === 'enemy' && enemyCore.hp > 0) {
+    const ut = UNIT_TYPES[unit.typeId];
+    if (ut.role === 'ranged' && Math.abs(enemyCore.x - unit.x) <= ut.range + world.enemySiege) return { kind: 'core', ref: enemyCore };
+  }
+  // r15 И17 (куратор №6: «крепость врага 2,5 мин держалась на 25/1043 HP при
+  // армии у ворот»): бойцы игрока били ближайшего — свежего защитника, который
+  // рождается прямо у ворот, а не крепость. Ниже FINISH_HP её HP боец игрока,
+  // достающий до крепости, бьёт крепость (добивание).
+  if (unit.team === 'player' && enemyCore.hp > 0 && enemyCore.hp < enemyCore.maxHp * FINISH_HP &&
+      Math.abs(enemyCore.x - unit.x) <= UNIT_TYPES[unit.typeId].range) return { kind: 'core', ref: enemyCore };
   let best = null, bestDist = Infinity;
   for (const u of world.units) {
     if (u.team !== enemyTeam || u.state === 'dead') continue;
@@ -147,8 +213,93 @@ function updateBreakerUnit(world, u, t, dt) {
   }
 }
 
-function dealDamage(world, targetInfo, dmg, onKillTeamGold, attackerRole = 'melee') {
+// r15 И15 (куратор №5: «м4 — 90 с на 1000, потом за 19 с до 86»; «м5 —
+// крепость 1000 → 0 за 10 с»). «Стена» крепости игрока: урон по ней не
+// быстрее FORT_GUARD.perSec × макс. HP в секунду — «ведро» ёмкостью burstSec
+// секунд, пополняется непрерывно (updateFortGuard). Сверх лимита удар
+// поглощается (world.fortAbsorbed, искра через world.onFortAbsorb). Итог: за
+// любые 10 с — не больше ~35–38 % HP, полная крепость держится ≥ 30 с даже
+// против толпы — у игрока всегда есть время вернуть героя, дать «Залп»,
+// купить бойцов. Метки для сигнала «Fort under attack!» (HUD, И16):
+// world.fortHitAt — время последнего удара (с боя), world.fortHitDps —
+// урон/с за последние dpsWindowSec.
+function makeFortGuard(maxHp, perSec) {
+  const rate = maxHp * perSec;
+  return { rate, cap: rate * FORT_GUARD.burstSec, budget: rate * FORT_GUARD.burstSec, hits: [] };
+}
+function fortGuardAbsorb(world, dmg) {
+  const g = world.fortGuard;
+  // r15 И21: «последний рубеж» (ниже LAST_STAND.hpFrac HP) — лимит снят,
+  // стена не продлевает агонию (game.js updateLastStand)
+  const ok = world.lastStand ? dmg : Math.min(dmg, Math.max(0, g.budget));
+  g.budget -= ok;
+  world.fortHitAt = world.clock || 0;
+  if (ok > 0) g.hits.push([world.fortHitAt, ok]);
+  if (dmg - ok > 0.01) {
+    world.fortAbsorbed = (world.fortAbsorbed || 0) + (dmg - ok);
+    world.onFortAbsorb && world.onFortAbsorb(dmg - ok);
+  }
+  return ok;
+}
+// Из update() (game.js) каждый кадр боя: пополнение «ведра» и урон/с за окно.
+function updateFortGuard(world, dt, now) {
+  world.clock = now;
+  const g = world.fortGuard;
+  if (!g) return;
+  g.budget = Math.min(g.cap, g.budget + g.rate * dt);
+  while (g.hits.length && g.hits[0][0] < now - FORT_GUARD.dpsWindowSec) g.hits.shift();
+  let sum = 0;
+  for (const h of g.hits) sum += h[1];
+  world.fortHitDps = sum / FORT_GUARD.dpsWindowSec;
+}
+
+// r15 И15 (куратор №5: «в м1 нет угрозы: 1000/1000 в 3 из 4 прогонов»):
+// «налётчик» — боец врага из первого натиска м1 (wave.assault.raiders,
+// data.js I15_RAID). Активная армия игрока стоит у вражеских ворот и
+// перемалывает любой отряд на выходе (бегущих сквозь строй убивало за 1–2 с),
+// поэтому налётчики идут подкопом: вылезают из-под земли (пыль) в emergeDx px
+// перед своей крепостью игрока, бегут к стене быстрее обычного (speedMult),
+// не отвлекаясь на бойцов и героя, бьют стену blows раз по blowFrac × макс.
+// HP и уходят обратно к своим воротам (там исчезают). Отбиться: герой у
+// ворот, «Залп» (налётчики — передний край врага), свежекупленные бойцы
+// (появляются прямо у стены). За убийство — обычная награда. Огненная аура
+// (u.buffTimer, как у «Боевого клича») и искры — чтобы их было видно.
+function makeRaider(world, u, cfg) {
+  u.raid = { phase: 'charge', blows: cfg.blows, blowDmg: world.playerCore.maxHp * cfg.blowFrac, speedMult: cfg.speedMult };
+  u.buffTimer = 1;
+  if (cfg.emergeDx) {
+    u.x = world.playerCore.x + cfg.emergeDx;
+    world.onRaidEmerge && world.onRaidEmerge(u.x);
+  }
+}
+function updateRaider(world, u, t, dt) {
+  const R = u.raid, core = world.playerCore;
+  u.buffTimer = 1;
+  const speed = t.speed * R.speedMult;
+  if (R.phase === 'charge' && core.hp > 0 && Math.abs(core.x - u.x) <= t.range) {
+    u.state = 'attack';
+    u.attackTimer -= dt;
+    if (u.attackTimer <= 0) {
+      u.attackTimer = t.atkInterval;
+      // blowDmg — доля HP крепости; множитель главы (playerCoreDmgMult) не режет удар
+      dealDamage(world, { kind: 'core', ref: core }, R.blowDmg / (world.playerCoreDmgMult || 1), null, t.role);
+      if (--R.blows <= 0) { R.phase = 'flee'; u.dir = 1; }
+    }
+    return;
+  }
+  if (R.phase === 'charge' && core.hp <= 0) { R.phase = 'flee'; u.dir = 1; }
+  u.state = 'walk';
+  u.walkPhase += dt * (speed / 12);
+  u.x += u.dir * speed * dt;
+  u.x = Math.max(ARENA.laneMin, Math.min(ARENA.laneMax, u.x));
+  if (R.phase === 'flee' && u.x >= ARENA.laneMax - 1) { u.state = 'dead'; u.deathT = 1; } // ушёл за свои ворота — без трупа и награды
+}
+
+function dealDamage(world, targetInfo, dmg, onKillTeamGold, attackerRole = 'melee', counterRole = null) {
   const ref = targetInfo.ref;
+  // r15 И17: контры ролей (data.js counterMult) — только боец по бойцу;
+  // counterRole — роль бойца-атакующего (у башен, «Залпа», героя её нет).
+  if (counterRole && targetInfo.kind === 'unit') dmg *= counterMult(counterRole, UNIT_TYPES[ref.typeId].role);
   // Глиф неуязвимости вражеской базы (раунд 5, бафы по HP%) — урон вообще
   // не применяется, пока core.invulnerable > 0 (см. ai.js, applyEnemyBaseBuff).
   if (targetInfo.kind === 'core' && ref.invulnerable > 0) return;
@@ -156,12 +307,32 @@ function dealDamage(world, targetInfo, dmg, onKillTeamGold, attackerRole = 'mele
   // Броня героя (снаряжение из магазина) снижает урон только ему; щитоносец
   // (раунд 8) — тот же принцип для обычного юнита, дефинировано на его типе.
   const unitReduction = targetInfo.kind === 'unit' ? (UNIT_TYPES[ref.typeId].dmgReduction || 0) : 0;
-  const reduction = targetInfo.kind === 'hero' ? (ref.dmgReduction || 0) : unitReduction;
-  const finalDmg = dmg * (1 - reduction);
+  let reduction = targetInfo.kind === 'hero' ? (ref.dmgReduction || 0) : unitReduction;
+  // r15 И15: в главах 1–2 стрелы и камни бьют героя слабее (mission.heroRangedTaken
+  // → world.heroRangedTaken): в главе 2 это 40–60 % урона по нему — вражеские
+  // стрелки из-за спин своих выбирают героя, стоящего впереди армии.
+  if (targetInfo.kind === 'hero' && attackerRole === 'ranged' && world.heroRangedTaken) reduction = 1 - (1 - reduction) * world.heroRangedTaken;
+  // r15 И11: урон по крепости ИГРОКА в главе 1 ниже (mission.enemyCoreDmgMult
+  // → world.playerCoreDmgMult, game.js startMission) — прорыв пары бойцов
+  // в м1–м3 не сносит крепость за 20 с. По вражеской крепости — без изменений.
+  // r15 И15: овертайм (game.js, OVERTIME) — крепость врага «сдаёт», урон по ней выше.
+  const coreMult = targetInfo.kind !== 'core' ? 1 : ref.team === 'player' ? (world.playerCoreDmgMult || 1) : (world.enemyCoreDmgTakenMult || 1);
+  let finalDmg = dmg * (1 - reduction) * coreMult;
+  // r15 И19 (куратор №7: «вражеская крепость висит на 45→29 HP 60+ с»):
+  // ниже FINISH_ONE_HIT её HP любой удар бойца, героя или «Залпа» игрока
+  // добивает. Крепость ИГРОКА так не падает (её держит FORT_GUARD).
+  if (targetInfo.kind === 'core' && ref.team === 'enemy' && ref.hp < ref.maxHp * FINISH_ONE_HIT) finalDmg = Math.max(finalDmg, ref.hp);
+  if (targetInfo.kind === 'core' && ref.team === 'player' && world.fortGuard) {
+    finalDmg = fortGuardAbsorb(world, finalDmg);
+    if (finalDmg <= 0) return; // весь удар приняла стена — искра в world.onFortAbsorb
+  }
   ref.hp -= finalDmg;
+  if (typeof onDamageFx === 'function') onDamageFx(world, targetInfo.kind, ref, finalDmg, attackerRole); // раунд 15 (И4): числа урона, хит-стоп, тряска (game.js)
   if (targetInfo.kind === 'core') {
     SFX.coreHit();
-    world.onCoreHit && world.onCoreHit(ref);
+    // Раунд 15: урон по ядру даёт опыт стороне-атакующему (смена эпохи).
+    addTeamXp(world, ref.team === 'player' ? 'enemy' : 'player', Math.min(finalDmg, finalDmg + ref.hp) * AGE_UP.xpPerCoreDmg);
+    world.onCoreHit && world.onCoreHit(ref, finalDmg);
     if (ref.hp <= 0) { ref.hp = 0; world.onCoreDestroyed && world.onCoreDestroyed(ref); }
     return;
   }
@@ -182,8 +353,11 @@ function dealDamage(world, targetInfo, dmg, onKillTeamGold, attackerRole = 'mele
     ref.deathT = 0.0001;
     SFX.death();
     const t = UNIT_TYPES[ref.typeId];
-    const reward = Math.round(t.cost * ECONOMY.killGoldShare * (ref.elite ? 1.8 : 1));
-    onKillTeamGold && onKillTeamGold(ref.team === 'player' ? 'enemy' : 'player', reward);
+    const killerTeam = ref.team === 'player' ? 'enemy' : 'player';
+    const unitCost = ref.cost || t.cost; // раунд 15: цена в эпохе, в которой юнит родился
+    const reward = Math.round(unitCost * ECONOMY.killGoldShare * (ref.elite ? 1.8 : 1));
+    onKillTeamGold && onKillTeamGold(killerTeam, reward);
+    addTeamXp(world, killerTeam, unitCost * (ref.elite ? 1.8 : 1)); // раунд 15: опыт = цена убитого
     // Личный килл героя — отдельная монета "в рюкзак", сверх обычной
     // командной награды (см. ПЛАН.md, раунд 3: рюкзак героя).
     if (attackerRole === 'hero' || attackerRole === 'hero_special') {
@@ -205,6 +379,7 @@ function updateUnits(world, dt, onKillTeamGold) {
     if (u.buffTimer > 0) u.buffTimer = Math.max(0, u.buffTimer - dt); // раунд 9: Боевой клич
     const t = UNIT_TYPES[u.typeId];
     if (t.role === 'breaker') { updateBreakerUnit(world, u, t, dt); continue; }
+    if (u.raid) { updateRaider(world, u, t, dt); continue; } // r15 И15: «налётчик» м1
     const target = findTarget(world, u);
     if (!target) { u.state = 'walk'; continue; }
     const dist = Math.abs(target.ref.x - u.x);
@@ -213,7 +388,10 @@ function updateUnits(world, dt, onKillTeamGold) {
     // Боевым кличем — оба канала независимы, оба могут быть активны разом.
     const cryDmg = (buffed ? SHOP.heroAbilityCry.dmgMult : 1) * (u.dmgMult || 1);
     const crySpeed = buffed ? SHOP.heroAbilityCry.speedMult : 1;
-    if (dist <= t.range) {
+    // r15 И13: «поджигатели» (world.enemySiege, px) — стрелок врага бьёт
+    // крепость игрока с дальности t.range + enemySiege (навесом через строй).
+    const range = (world.enemySiege && u.team === 'enemy' && target.kind === 'core') ? t.range + world.enemySiege : t.range;
+    if (dist <= range) {
       u.state = 'attack';
       u.attackTimer -= dt;
       if (u.attackTimer <= 0) {
@@ -225,10 +403,11 @@ function updateUnits(world, dt, onKillTeamGold) {
             // Раунд 14: только для отрисовки (vfx.js — дуга полёта и вид
             // снаряда по роли), в логике попадания не участвует.
             x0: u.x, tx: target.ref.x, role: t.role,
+            cRole: t.role, // r15 И17: контры ролей
           });
           SFX.shoot();
         } else {
-          dealDamage(world, target, t.dmg * cryDmg, onKillTeamGold, t.role);
+          dealDamage(world, target, t.dmg * cryDmg, onKillTeamGold, t.role, t.role);
         }
       }
     } else {
@@ -268,10 +447,13 @@ function updateUnits(world, dt, onKillTeamGold) {
         const enemyTeam = p.team === 'player' ? 'enemy' : 'player';
         for (const u2 of world.units) {
           if (u2.team !== enemyTeam || u2.state === 'dead') continue;
-          if (Math.abs(u2.x - ref.x) <= p.splash) dealDamage(world, { kind: 'unit', ref: u2 }, p.dmg, onKillTeamGold, 'ranged');
+          if (Math.abs(u2.x - ref.x) <= p.splash) dealDamage(world, { kind: 'unit', ref: u2 }, p.dmg, onKillTeamGold, 'ranged', p.cRole);
         }
+        // r15 И17: «огонь со стен» (ai.js updateGateGuard) задевает и героя
+        const h = world.hero;
+        if (p.heroSplash && h.team === enemyTeam && h.alive && Math.abs(h.x - ref.x) <= p.splash) dealDamage(world, { kind: 'hero', ref: h }, p.dmg * p.heroSplash, onKillTeamGold, 'ranged');
       } else {
-        dealDamage(world, { kind: p.targetKind, ref }, p.dmg, onKillTeamGold, 'ranged');
+        dealDamage(world, { kind: p.targetKind, ref }, p.dmg, onKillTeamGold, 'ranged', p.cRole);
       }
       world.onImpact && world.onImpact(ref.x);
       return false;
@@ -280,8 +462,49 @@ function updateUnits(world, dt, onKillTeamGold) {
   });
 }
 
+// Раунд 15: правая граница хода героя — фасад вражеской крепости (край
+// донжона CORE_KEEP_FAR от ядра, минус полкорпуса героя). Единый источник
+// и для ограничения хода, и для правила «вплотную к стене — удар по ядру».
+const HERO_WALL_GAP = 8;
+function heroWallX(team) {
+  return team === 'player' ? ARENA.enemyCoreX - CORE_KEEP_FAR - HERO_WALL_GAP : ARENA.laneMax + 60;
+}
+
+// Раунд 15 (И9, куратор: «на старте герой стоит внутри своей крепости и
+// перекрывает её»): старт и воскрешение героя — перед воротами, за
+// подножием холма крепости (фасад — core.x + 46, холм — до +62 при
+// масштабе крепости до ×1.16), а не за стеной (было laneMin − 40 = 56).
+const HERO_HOME_GAP = 90;
+function heroHomeX(team) {
+  return team === 'player' ? ARENA.playerCoreX + ARENA.coreWidth + HERO_HOME_GAP : ARENA.laneMax + 40;
+}
+
+// r15 И11 (куратор №3: «враги проходят мимо героя прямо к крепости»). Две
+// причины: 1) герой проходил СКВОЗЬ вражеский строй — шёл дальше, враги
+// оставались у него за спиной, дошагивали до крепости; 2) у своих ворот герой
+// мог уйти за стену (laneMin − 60 = 36, сзади ядра x = 72) — враги у ядра
+// били ядро как ближайшую цель, а герой оставался позади них. Теперь:
+//  • HERO_BODY_GAP — герой не проходит сквозь живого вражеского бойца (кроме
+//    «раба», у которого нет боевой цели): упирается в него, как в стену, и
+//    враг у него на пути бьёт героя как ближайшую цель (findTarget);
+//  • heroMinX — левая граница своего героя — фасад своих ворот (ядро + 48):
+//    враг, идущий к ядру, всегда сначала встречает героя.
+const HERO_BODY_GAP = 16;
+function heroMinX(team) {
+  return team === 'player' ? ARENA.playerCoreX + ARENA.coreWidth + 48 : ARENA.laneMin - 60;
+}
+function heroBlockedX(world, hero, oldX, newX) {
+  const enemyTeam = hero.team === 'player' ? 'enemy' : 'player';
+  for (const u of world.units) {
+    if (u.team !== enemyTeam || u.state === 'dead' || UNIT_TYPES[u.typeId].role === 'breaker') continue;
+    if (newX > oldX && u.x >= oldX) newX = Math.min(newX, Math.max(oldX, u.x - HERO_BODY_GAP));
+    else if (newX < oldX && u.x <= oldX) newX = Math.max(newX, Math.min(oldX, u.x + HERO_BODY_GAP));
+  }
+  return newX;
+}
+
 function makeHero(team) {
-  const x = team === 'player' ? ARENA.laneMin - 40 : ARENA.laneMax + 40;
+  const x = heroHomeX(team);
   return {
     kind: 'hero', team, x, hp: HERO.hp, maxHp: HERO.hp, alive: true,
     facing: team === 'player' ? 1 : -1, respawnTimer: 0,
@@ -307,7 +530,7 @@ function updateHero(world, dt, input, onKillTeamGold) {
     if (hero.respawnTimer <= 0) {
       hero.alive = true;
       hero.hp = hero.maxHp;
-      hero.x = ARENA.laneMin - 40;
+      hero.x = heroHomeX(hero.team); // И9: перед воротами
     }
     return;
   }
@@ -334,8 +557,14 @@ function updateHero(world, dt, input, onKillTeamGold) {
     const newFacing = axis > 0 ? 1 : -1;
     if (newFacing !== hero.facing) hero.cloakFlareT = 1;
     hero.facing = newFacing;
+    const oldX = hero.x;
     hero.x += axis * HERO.moveSpeed * dt;
-    hero.x = Math.max(ARENA.laneMin - 60, Math.min(ARENA.laneMax + 60, hero.x));
+    // Раунд 15 (решение основателя): герой упирается в фасад вражеской
+    // крепости, а не пробегает за неё (раньше laneMax+60 — удар «в пустоту»
+    // за донжоном выглядел как баг). И11: и в свои ворота (heroMinX), и во
+    // вражеского бойца на пути (heroBlockedX) — сквозь строй не проходит.
+    hero.x = Math.max(heroMinX(hero.team), Math.min(heroWallX(hero.team), hero.x));
+    hero.x = heroBlockedX(world, hero, oldX, hero.x);
     hero.walkPhase += dt * (HERO.moveSpeed / 12);
   }
 
@@ -358,7 +587,13 @@ function updateHero(world, dt, input, onKillTeamGold) {
     }
     const core = enemyTeam === 'player' ? world.playerCore : world.enemyCore;
     const coreDist = Math.abs(core.x - hero.x);
-    if (nearest && (coreDist >= nearestDist || !(coreDist <= meleeRange))) {
+    // Раунд 15: вплотную к фасаду (у стены heroWallX) удар ВСЕГДА идёт по
+    // ядру — независимо от дальности и взгляда: дальше герой пройти не
+    // может, «развернуться и добить» больше не нужно.
+    const atWall = hero.team === 'player' && hero.x >= heroWallX(hero.team) - 6;
+    if (atWall && core.hp > 0) {
+      dealDamage(world, { kind: 'core', ref: core }, (HERO.meleeDmg + hero.dmgBonus), onKillTeamGold, 'hero');
+    } else if (nearest && (coreDist >= nearestDist || !(coreDist <= meleeRange))) {
       dealDamage(world, { kind: 'unit', ref: nearest }, (HERO.meleeDmg + hero.dmgBonus), onKillTeamGold, 'hero');
     } else if (coreDist <= meleeRange && Math.sign(core.x - hero.x || hero.facing) === hero.facing) {
       // ОТКАТ стадии 2 (прямое слово основателя): проскок героя за базу и
@@ -408,4 +643,69 @@ function updateHero(world, dt, input, onKillTeamGold) {
     SFX.heroSpecial();
     world.onCry && world.onCry(hero.x);
   }
+}
+
+// ---------------------------------------------------------------- раунд 15: «Залп»
+// Защита базы с миссии 1 (П6, ГДД «Допущения»): град снарядов эпохи
+// стреляющей стороны на участок сразу за передним краем противника. Урон по
+// площади только по юнитам (не по ядру и не по герою). Снаряды живут в
+// world.volleyShells: логика — здесь, отрисовка — VFX.drawVolley (vfx.js).
+const VOLLEY_KIND = { stone: 'stone', bronze: 'arrow', iron: 'ball' };
+
+// Центр участка залпа или null, если бить некого.
+function volleyTargetX(world, team) {
+  const enemyTeam = team === 'player' ? 'enemy' : 'player';
+  let front = null;
+  for (const u of world.units) {
+    if (u.team !== enemyTeam || u.state === 'dead') continue;
+    if (front === null || (team === 'player' ? u.x < front : u.x > front)) front = u.x;
+  }
+  if (front === null) return null;
+  const dir = team === 'player' ? 1 : -1;
+  const half = VOLLEY.width / 2;
+  return Math.max(ARENA.laneMin + half * 0.5, Math.min(ARENA.laneMax - half * 0.5, front + dir * VOLLEY.lead));
+}
+
+function launchVolley(world, team, centerX, ageId, dmgMult) {
+  world.volleyShells = world.volleyShells || [];
+  const dir = team === 'player' ? 1 : -1;
+  const n = VOLLEY.shells;
+  for (let i = 0; i < n; i++) {
+    // стратифицированный разброс по ширине — без «дыр» и без кучи в центре
+    const lx = centerX + ((i + Math.random()) / n - 0.5) * VOLLEY.width;
+    const fall = VOLLEY.fallSec * (0.85 + Math.random() * 0.3);
+    world.volleyShells.push({
+      team, x: lx, delay: Math.random() * VOLLEY.spreadSec, t: 0, fall,
+      sx: lx - dir * (110 + Math.random() * 50), sy: -330 - Math.random() * 40,
+      kind: VOLLEY_KIND[ageId] || 'stone', dmg: VOLLEY.dmg * (dmgMult || 1), radius: VOLLEY.radius,
+    });
+  }
+  world.volleyZone = { x: centerX, w: VOLLEY.width, t: 0, life: VOLLEY.spreadSec + VOLLEY.fallSec * 1.2, team };
+}
+
+function updateVolley(world, dt, onKillTeamGold) {
+  if (world.volleyZone) {
+    world.volleyZone.t += dt;
+    if (world.volleyZone.t >= world.volleyZone.life) world.volleyZone = null;
+  }
+  if (!world.volleyShells || !world.volleyShells.length) return;
+  for (const s of world.volleyShells) {
+    if (s.delay > 0) { s.delay -= dt; continue; }
+    s.t += dt;
+    if (s.t < s.fall) continue;
+    s.done = true;
+    const enemyTeam = s.team === 'player' ? 'enemy' : 'player';
+    for (const u of world.units) {
+      if (u.team !== enemyTeam || u.state === 'dead') continue;
+      if (Math.abs(u.x - s.x) <= s.radius) dealDamage(world, { kind: 'unit', ref: u }, s.dmg, onKillTeamGold, 'ranged');
+    }
+    // r15 И19: «Залп» игрока добивает крепость врага ниже FINISH_ONE_HIT
+    // (снаряд лёг на донжон); выше порога залп крепость не бьёт, как раньше.
+    const ec = world.enemyCore;
+    if (s.team === 'player' && ec.hp > 0 && ec.hp < ec.maxHp * FINISH_ONE_HIT && Math.abs(ec.x - s.x) <= s.radius + CORE_KEEP_FAR) {
+      dealDamage(world, { kind: 'core', ref: ec }, ec.hp, onKillTeamGold, 'volley');
+    }
+    world.onVolleyImpact && world.onVolleyImpact(s.x, s.kind);
+  }
+  world.volleyShells = world.volleyShells.filter(s => !s.done);
 }
