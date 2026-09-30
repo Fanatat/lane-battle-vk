@@ -383,6 +383,8 @@ function updateUnits(world, dt, onKillTeamGold) {
     const target = findTarget(world, u);
     if (!target) { u.state = 'walk'; continue; }
     const dist = Math.abs(target.ref.x - u.x);
+    // r16: ближний бой (melee/spear/heavy) — от края тела цели (BODY_R), не от центра
+    const edge = (target.kind !== 'core' && (t.role === 'melee' || t.role === 'spear' || t.role === 'heavy')) ? dist - bodyRadius(target.ref) : dist;
     const buffed = u.buffTimer > 0;
     // DLC «Усилить врага» (u.dmgMult, см. spawnUnit) перемножается с
     // Боевым кличем — оба канала независимы, оба могут быть активны разом.
@@ -391,7 +393,7 @@ function updateUnits(world, dt, onKillTeamGold) {
     // r15 И13: «поджигатели» (world.enemySiege, px) — стрелок врага бьёт
     // крепость игрока с дальности t.range + enemySiege (навесом через строй).
     const range = (world.enemySiege && u.team === 'enemy' && target.kind === 'core') ? t.range + world.enemySiege : t.range;
-    if (dist <= range) {
+    if (edge <= range) {
       u.state = 'attack';
       u.attackTimer -= dt;
       if (u.attackTimer <= 0) {
@@ -421,7 +423,7 @@ function updateUnits(world, dt, onKillTeamGold) {
     // камнями — см. ПЛАН.md, раунд 5).
     if (t.role === 'rider') {
       u.meleeTimer = (u.meleeTimer || 0) - dt;
-      if (dist <= t.meleeRange && u.meleeTimer <= 0) {
+      if (dist - (target.kind === 'core' ? 0 : bodyRadius(target.ref)) <= t.meleeRange && u.meleeTimer <= 0) {
         u.meleeTimer = t.meleeInterval;
         dealDamage(world, target, t.meleeDmg * cryDmg, onKillTeamGold, 'melee');
       }
@@ -484,12 +486,12 @@ function heroHomeX(team) {
 // оставались у него за спиной, дошагивали до крепости; 2) у своих ворот герой
 // мог уйти за стену (laneMin − 60 = 36, сзади ядра x = 72) — враги у ядра
 // били ядро как ближайшую цель, а герой оставался позади них. Теперь:
-//  • HERO_BODY_GAP — герой не проходит сквозь живого вражеского бойца (кроме
+//  • зазор героя (сумма BODY_R, r16) — герой не проходит сквозь живого вражеского бойца (кроме
 //    «раба», у которого нет боевой цели): упирается в него, как в стену, и
 //    враг у него на пути бьёт героя как ближайшую цель (findTarget);
 //  • heroMinX — левая граница своего героя — фасад своих ворот (ядро + 48):
 //    враг, идущий к ядру, всегда сначала встречает героя.
-const HERO_BODY_GAP = 16;
+// r16: вместо фиксированных 16 — сумма радиусов тел (BODY_R): тела не заходят друг на друга.
 function heroMinX(team) {
   return team === 'player' ? ARENA.playerCoreX + ARENA.coreWidth + 48 : ARENA.laneMin - 60;
 }
@@ -497,8 +499,9 @@ function heroBlockedX(world, hero, oldX, newX) {
   const enemyTeam = hero.team === 'player' ? 'enemy' : 'player';
   for (const u of world.units) {
     if (u.team !== enemyTeam || u.state === 'dead' || UNIT_TYPES[u.typeId].role === 'breaker') continue;
-    if (newX > oldX && u.x >= oldX) newX = Math.min(newX, Math.max(oldX, u.x - HERO_BODY_GAP));
-    else if (newX < oldX && u.x <= oldX) newX = Math.max(newX, Math.min(oldX, u.x + HERO_BODY_GAP));
+    const gap = BODY_R.hero + bodyRadius(u);
+    if (newX > oldX && u.x >= oldX) newX = Math.min(newX, Math.max(oldX, u.x - gap));
+    else if (newX < oldX && u.x <= oldX) newX = Math.max(newX, Math.min(oldX, u.x + gap));
   }
   return newX;
 }
@@ -580,7 +583,7 @@ function updateHero(world, dt, input, onKillTeamGold) {
     let nearest = null, nearestDist = Infinity;
     for (const u of world.units) {
       if (u.team !== enemyTeam || u.state === 'dead') continue;
-      const d = Math.abs(u.x - hero.x);
+      const d = Math.abs(u.x - hero.x) - bodyRadius(u); // r16: до края тела цели
       if (d <= meleeRange && Math.sign(u.x - hero.x || hero.facing) === hero.facing && d < nearestDist) {
         nearest = u; nearestDist = d;
       }
@@ -614,7 +617,7 @@ function updateHero(world, dt, input, onKillTeamGold) {
     const enemyTeam = hero.team === 'player' ? 'enemy' : 'player';
     for (const u of world.units) {
       if (u.team !== enemyTeam || u.state === 'dead') continue;
-      if (Math.abs(u.x - hero.x) <= HERO.specialRange) {
+      if (Math.abs(u.x - hero.x) - bodyRadius(u) <= HERO.specialRange) { // r16: край тела цели в круге
         dealDamage(world, { kind: 'unit', ref: u }, (HERO.specialDmg + hero.dmgBonus), onKillTeamGold, 'hero_special');
       }
     }

@@ -1396,7 +1396,7 @@ function renderShop() {
       gearSword: (t) => ({ label: T('shop.statDmg'), from: HERO.meleeDmg + t * SHOP.gearSword.dmgPerTier, to: HERO.meleeDmg + (t + 1) * SHOP.gearSword.dmgPerTier }),
       gearShield: (t) => ({ label: T('shop.statHp'), from: HERO.hp + t * SHOP.gearShield.hpPerTier, to: HERO.hp + (t + 1) * SHOP.gearShield.hpPerTier }),
       gearArmor: (t) => ({ label: T('shop.statArmor'), from: Math.round(Math.min(0.5, t * SHOP.gearArmor.reductionPerTier) * 100) + '%', to: Math.round(Math.min(0.5, (t + 1) * SHOP.gearArmor.reductionPerTier) * 100) + '%' }),
-      gearLongBlade: (t) => ({ label: T('shop.statRange'), from: Math.round(HERO.meleeRange * (1 + t * SHOP.gearLongBlade.rangeMultPerTier)), to: Math.round(HERO.meleeRange * (1 + (t + 1) * SHOP.gearLongBlade.rangeMultPerTier)) }),
+      gearLongBlade: (t) => ({ label: T('shop.statRange'), from: heroMeleeRangeAt(t), to: heroMeleeRangeAt(t + 1) }),
     };
     const gearIcon = { gearSword: 'sword', gearShield: 'shield', gearArmor: 'armor', gearLongBlade: 'blade' };
     const gearEffect = { gearSword: 'shop.gearSwordEffect', gearShield: 'shop.gearShieldEffect', gearArmor: 'shop.gearArmorEffect', gearLongBlade: 'shop.gearLongBladeEffect' };
@@ -1978,7 +1978,7 @@ function startMission(index, opts = {}) {
   world.hero.hp = world.hero.maxHp;
   world.hero.dmgBonus = progress.gearSword * SHOP.gearSword.dmgPerTier;
   world.hero.dmgReduction = Math.min(0.5, progress.gearArmor * SHOP.gearArmor.reductionPerTier);
-  world.hero.meleeRangeMult = 1 + progress.gearLongBlade * SHOP.gearLongBlade.rangeMultPerTier;
+  world.hero.meleeRangeMult = heroMeleeRangeAt(progress.gearLongBlade) / HERO.meleeRange;
   world.hero.cryUnlocked = !!progress.heroAbilityCry; // раунд 9: покупка магазина
   const unlockedUnits = UNIT_ORDER.filter(id => UNIT_TYPES[id].unlockMission <= mission.id);
   const aiHelp = aiHelpFor(mission); // r15 И11: помощь после поражений подряд
@@ -4118,6 +4118,7 @@ function render() {
       hitFlash: hero.hitFlash,
       weapon: age.weapon.melee,
       hero: true,
+      heroRange: HERO.meleeRange * (hero.meleeRangeMult || 1), // r16: длина оружия и след удара = фактическая дальность
       // Визуал прокачки (раунд 8) — тир снаряжения из магазина красит
       // экипировку прямо на модели (бронза/серебро/золото).
       gearSwordTier: progress.gearSword, gearShieldTier: progress.gearShield, gearArmorTier: progress.gearArmor,
@@ -4214,21 +4215,33 @@ function drawTower(tw) {
   const age = enemy ? (match.enemyAge || match.age) : match.age; // И6: башня в эпохе своей стороны
   const fig = enemy ? ART.enemy : ART.player;
   const face = enemy ? -1 : 1;
+  const now = performance.now();
   ctx.save();
   ctx.translate(tw.x, ARENA.groundY);
+  // r16 (правка основателя 29.09: «в магазине башня красивее, чем на поле»):
+  // на поле башня теперь той же формы, что иконка магазина — суженная A-рама
+  // с перекладинами, светлая площадка, красно-коричневый шатёр и флажок;
+  // лучник стоит под крышей. Масштаб растёт с кадром чуть слабее крепости —
+  // башни стоят через 45 ед., шатры не должны налезать друг на друга.
+  const sc = 1 + ((VIEW.fortK || 1) - 1) * 0.6;
+  ctx.scale(sc, sc);
   const top = -50;
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 4;
-  for (const px of [-8, 8]) { ctx.beginPath(); ctx.moveTo(px * 1.4, 0); ctx.lineTo(px, top + 2); ctx.stroke(); }
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.beginPath(); ctx.ellipse(0, 1, 18, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+  // ноги A-рамы (сужаются кверху) + перекладины и раскос
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 4.2;
+  for (const px of [-8, 8]) { ctx.beginPath(); ctx.moveTo(px * 1.6, 0); ctx.lineTo(px, top + 2); ctx.stroke(); }
   ctx.strokeStyle = age.woodLight; ctx.lineWidth = 2.2;
-  ctx.beginPath(); ctx.moveTo(-10, -10); ctx.lineTo(9, -28); ctx.moveTo(10, -10); ctx.lineTo(-9, -28); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-9, -28); ctx.lineTo(9, -28); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-11, -10); ctx.lineTo(9, -30); ctx.moveTo(11, -10); ctx.lineTo(-9, -30); ctx.stroke();
+  ctx.lineWidth = 2.6;
+  ctx.beginPath(); ctx.moveTo(-11.5, -14); ctx.lineTo(11.5, -14); ctx.moveTo(-9.6, -31); ctx.lineTo(9.6, -31); ctx.stroke();
   // площадка с перилами
-  ctx.fillStyle = age.woodLight; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.rect(-14, top - 2, 28, 5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.rect(-16, top - 2, 32, 6); ctx.fill(); ctx.stroke();
   ctx.strokeStyle = age.woodDark; ctx.lineWidth = 2;
-  for (const px of [-13, -4.5, 4.5, 13]) { ctx.beginPath(); ctx.moveTo(px, top - 2); ctx.lineTo(px, top - 11); ctx.stroke(); }
-  ctx.beginPath(); ctx.moveTo(-14, top - 11); ctx.lineTo(14, top - 11); ctx.stroke();
+  for (const px of [-14, -5, 5, 14]) { ctx.beginPath(); ctx.moveTo(px, top - 2); ctx.lineTo(px, top - 11); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(-15, top - 11); ctx.lineTo(15, top - 11); ctx.stroke();
   // лучник — тот же силуэтный язык, что у юнитов (ART.player/ART.enemy)
   const flash = tw.fireFlash || 0;
   const base = top - 2;
@@ -4251,6 +4264,21 @@ function drawTower(tw) {
     ctx.fillStyle = `rgba(255,240,180,${Math.min(1, flash) * 0.7})`;
     ctx.beginPath(); ctx.arc(bx + face * 8, base - 9, 3.5, 0, Math.PI * 2); ctx.fill();
   }
+  // шатёр на угловых стойках (цвет как у иконки магазина; у врага темнее)
+  const eaveY = top - 31, apexY = eaveY - 19;
+  ctx.strokeStyle = age.woodDark; ctx.lineWidth = 2.4;
+  for (const px of [-14, 14]) { ctx.beginPath(); ctx.moveTo(px, top - 2); ctx.lineTo(px, eaveY); ctx.stroke(); }
+  ctx.fillStyle = age.woodLight; ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.rect(-17, eaveY - 1, 34, 4); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = enemy ? '#5c2a22' : '#8a3b22'; ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(-19, eaveY - 1); ctx.lineTo(0, apexY); ctx.lineTo(19, eaveY - 1); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,220,180,.28)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(-15, eaveY - 3); ctx.lineTo(-1, apexY + 3); ctx.stroke();
+  // флажок: своя сторона — зелёный/золотой, враг — красный; развевается от линии боя
+  ctx.save();
+  ctx.scale(face, 1);
+  drawFortFlag(0, apexY + 1, apexY - 14, face, now, 0.62);
+  ctx.restore();
   ctx.restore();
 }
 // Облака — мягкие, с тёплым оттенком заката: радиальный градиент подложкой

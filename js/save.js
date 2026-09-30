@@ -18,7 +18,7 @@ function defaultProgress() {
     shopCurrencySpent: 0,
     towerA: false, towerB: false, trap: false,
     gearSword: 0, gearShield: 0, gearArmor: 0, // уровни 0-3
-    gearLongBlade: 0, // утро: уровень 0-3, +10%/уровень дальности герою, компенсация за откат facing-фикса
+    gearLongBlade: 0, // утро: уровень 0-3, дальность удара 55→60→64→68, компенсация за откат facing-фикса
     ownedThemeBlueRed: false, activeTheme: 'classic', // утро: тема оформления — покупка, применяется на весь интерфейс
     ownedCloakRed: false, // утро: плащ героя — покупка, косметика
     cosmeticTime: 'cycle', // cycle | day | night — ТЕКУЩИЙ выбор, не владение

@@ -128,7 +128,7 @@ function softStartHeroGuard(world, ai, input, dt) {
   hero.autoGuard = true;
   const reach = HERO.meleeRange * (hero.meleeRangeMult || 1);
   const d = near.x - hero.x;
-  if (Math.abs(d) > reach - 8) { input.moveAxis = Math.sign(d); return; }
+  if (Math.abs(d) - bodyRadius(near) > reach - 8) { input.moveAxis = Math.sign(d); return; }
   hero.facing = d >= 0 ? 1 : -1;
   input.attackPressed = true;
 }

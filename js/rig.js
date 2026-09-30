@@ -212,6 +212,20 @@ function weaponShaft(kind) {
   }
 }
 
+// r16 (решение основателя 29.09): кончик оружия героя в покое стоит на
+// WEAPON_INSET ед. ближе к телу, чем реальная дальность удара (HERO.meleeRange
+// × «Длинное лезвие»), — модель никогда не «бьёт» дальше, чем рисуется, и
+// растёт вместе с прокачкой. HAND_REST_X — вынос кисти вперёд в покое (rig-ед.).
+const WEAPON_INSET = 5;
+const HAND_REST_X = 3;
+function weaponTipX(kind) { return weaponShaft(kind)[2] + (kind === 'club' ? 3.4 : 0); }
+// Во сколько раз растянуть оружие героя (масштаб фигуры s), чтобы кончик в покое
+// стоял в (heroRange − WEAPON_INSET) ед. арены от центра героя.
+function heroWeaponLenK(kind, heroRange, s) {
+  const k = ((heroRange - WEAPON_INSET) / s - HAND_REST_X) / weaponTipX(kind);
+  return Math.max(0.5, Math.min(2.6, k));
+}
+
 // weapon: рисуется как дополнительный штрих в руке персонажа, зависит от
 // эпохи (см. AGES[...].weapon) и роли юнита. rot — поворот в руке (рад,
 // null = покой с лёгким покачиванием restWobble). tint — цвет тира
@@ -225,6 +239,7 @@ function drawWeapon(ctx, kind, handX, handY, facing, rot, restWobble = 0, tint =
   ctx.translate(handX, handY);
   ctx.rotate(facing < 0 ? Math.PI : 0);
   ctx.rotate(rot === null || rot === undefined ? restWobble : rot);
+  if (opts.lenK && opts.lenK !== 1) ctx.scale(opts.lenK, opts.lenK); // r16: удлинение оружия героя под дальность удара
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (opts.glow && !RANGED_WEAPONS.has(kind)) {
@@ -957,7 +972,7 @@ function drawStickman(ctx, o) {
   const {
     x, y, scale = 1, outline = ART.player.outline, facing = 1,
     walkPhase = 0, moving = false, attackPhase = null, deathT = null, hitFlash = 0,
-    weapon = null, hero = false, roleAccent = null,
+    weapon = null, hero = false, roleAccent = null, heroRange = null,
     bent = false, cheer = false, chainBall = false, chainLag = 6, chainTaut = 0,
     digPhase = null,
     gearSwordTier = 0, gearShieldTier = 0, gearArmorTier = 0, shieldColor = null,
@@ -1197,7 +1212,7 @@ function drawStickman(ctx, o) {
     const style = hero
       ? { fill: ART.slash.hero, glow: ART.hero.goldGlow, rim: ART.hero.goldHi, rimW: 2.2, glowR: 1.5 }
       : enemy ? { fill: ART.slash.enemy, rim: ART.slash.enemyRim } : { fill: ART.slash.player };
-    drawSlashArc(ctx, f, atk.sweep, atk.slashA, hero ? reach * 1.15 : (atk.style === 'slam' ? reach * 1.1 : reach), style, atk.a0, atk.a1);
+    drawSlashArc(ctx, f, atk.sweep, atk.slashA, hero ? (heroRange ? heroRange / s : reach * 1.15) : (atk.style === 'slam' ? reach * 1.1 : reach), style, atk.a0, atk.a1);
     ctx.restore();
   }
   ctx.restore();
@@ -1295,7 +1310,7 @@ function drawStickman(ctx, o) {
     const restWobble = legsMoving && attackPhase === null && !digHand ? Math.sin(walkPhase) * 0.15 : 0;
     const tint = hero && gearSwordTier > 0 ? GEAR_TIER_COLORS[gearSwordTier - 1] : (hero ? ART.hero.gold : null);
     const wopts = { pal: wpal };
-    if (hero) { wopts.glow = ART.hero.goldGlow; wopts.glowHi = ART.hero.goldHi; }
+    if (hero) { wopts.glow = ART.hero.goldGlow; wopts.glowHi = ART.hero.goldHi; if (heroRange) wopts.lenK = heroWeaponLenK(weapon, heroRange, s); }
     else if (enemy) wopts.glow = ENEMY_READ.weaponRim; // И20: оружие врага видно на тёмном теле
     if (rng) { wopts.draw = rng.draw; wopts.flash = rng.flash; wopts.whirl = rng.whirl; }
     if (atk && weapon === 'cannonarm' && atk.style === 'thrust' && atk.sweep > 0.6) wopts.flash = atk.slashA; // выстрел в упор

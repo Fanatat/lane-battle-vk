@@ -219,6 +219,20 @@ const UNIT_TYPES = {
 
 const UNIT_ORDER = ['infantry', 'spear', 'archer', 'heavy'];
 
+// r16 (правка основателя 29.09: «урон проходит, только если дальность попала в
+// центр юнита; модельки заходят друг на друга»): у каждого бойца есть тело —
+// полуширина хитбокса в ед. арены (heightMult юнита масштабирует её). Ближний
+// удар героя, ближний бой юнитов и спец-удар считают дистанцию до КРАЯ тела
+// цели, а не до её центра; герой не подходит к врагу ближе суммы радиусов.
+// Стрелы/снаряды по-прежнему летят в центр цели.
+const BODY_R = { melee: 18, spear: 18, heavy: 22, ranged: 14, rider: 20, breaker: 20, hero: 18 };
+function bodyRadius(ref) {
+  if (!ref) return 0;
+  if (ref.kind === 'hero') return BODY_R.hero;
+  const t = UNIT_TYPES[ref.typeId];
+  return t ? (BODY_R[t.role] || 18) * (t.heightMult || 1) : 0;
+}
+
 // Спецюниты врага (раунд 5) — не в UNIT_ORDER: игрок их купить не может,
 // только вражеская база спавнит их сама (бафы по HP% и рэндом-ростер).
 const ENEMY_SPECIAL_TYPES = {
@@ -331,7 +345,9 @@ const ECONOMY = {
 const HERO = {
   hp: 220,
   moveSpeed: 150,
-  meleeRange: 40,
+  // r16 (решение основателя 29.09): дальность обычного удара 40 → 55 (центр героя →
+  // центр цели, только вперёд); прокачка «Длинное лезвие» — SHOP.gearLongBlade.ranges.
+  meleeRange: 55,
   meleeDmg: 16,
   meleeInterval: 0.5,
   specialRange: 110,
@@ -795,7 +811,7 @@ const SHOP = {
   // бесплатного изменения правила. Основатель ожидал ступенчатую покупку,
   // как остальное снаряжение героя (меч/щит/броня) — три уровня, не одна
   // покупка: +10% за уровень, суммарно +30% на III.
-  gearLongBlade: { get name() { return I18N.t('shopname.gearLongBlade'); }, costs: [12, 22, 38], rangeMultPerTier: 0.1 },
+  gearLongBlade: { get name() { return I18N.t('shopname.gearLongBlade'); }, costs: [12, 22, 38], ranges: [60, 64, 68] }, // r16: дальность удара по уровням I–III (старт — HERO.meleeRange = 55)
   // cosmeticDay/cosmeticNight: .name нигде не читается (см. timeOfDayRow()
   // в game.js — там свои литералы 'День'/'Ночь', ключи shop.timeDay/
   // shop.timeNight) — оставлены как есть, переводить нечего.
@@ -842,7 +858,7 @@ const SHOP = {
   // (идея основателя + предложения агента, см. КОНЦЕПТ_ГДД.md/ПЛАН.md).
   trap2: { get name() { return I18N.t('shopname.trap2'); }, cost: 22, dmg: 14, range: 20, cooldown: 2, requiresChapter: 2 },
   towerC: { get name() { return I18N.t('shopname.towerC'); }, cost: 35, dmg: 9, range: 170, atkInterval: 1.3, requiresChapter: 3 },
-  startGoldBoost: { get name() { return I18N.t('shopname.startGoldBoost'); }, cost: 18, amount: 20, requiresChapter: 4 },
+  startGoldBoost: { get name() { return I18N.t('shopname.startGoldBoost'); }, cost: 18, amount: 100, requiresChapter: 4 },
   buybackDiscount: { get name() { return I18N.t('shopname.buybackDiscount'); }, cost: 20, discount: 15, requiresChapter: 5 },
   // Раунд 9 — новая способность героя (выбор агента, см. КОНЦЕПТ_ГДД.md,
   // «Допущения»): бафф своим юнитам на поле, хоткей K (освободился после
@@ -850,6 +866,12 @@ const SHOP = {
   // Раунд 10: кулдаун снижен с 20 до 15с по правке основателя.
   heroAbilityCry: { get name() { return I18N.t('shopname.heroAbilityCry'); }, cost: 30, dmgMult: 1.3, speedMult: 1.25, duration: 5, cooldown: 15 },
 };
+
+// Дальность обычного удара героя (ед. арены) на уровне «Длинного лезвия» tier 0–3.
+function heroMeleeRangeAt(tier) {
+  const t = Math.max(0, Math.min(SHOP.gearLongBlade.ranges.length, tier | 0));
+  return t === 0 ? HERO.meleeRange : SHOP.gearLongBlade.ranges[t - 1];
+}
 
 // Реестр тем оформления интерфейса (утренняя правка основателя) — вся
 // разметка (панели, кнопки, HUD, паузы, итоги) уже красится через CSS
