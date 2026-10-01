@@ -265,6 +265,10 @@ function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   const cssW = rect.width || window.innerWidth || ARENA.width;
   const cssH = rect.height || window.innerHeight || ARENA.height;
+  // Раунд 17: на телефонах resize стреляет пачкой (адресная строка, панели) и
+  // без смены размера — каждый раз rev+1 заставлял заново запекать фон
+  // (2 слоя по ~6 МБ) и копил старые слои в кэше. Тот же размер — ничего не делаем.
+  if (VIEW.rev > 0 && Math.abs(cssW - VIEW.cssW) < 0.5 && Math.abs(cssH - VIEW.cssH) < 0.5 && dpr === VIEW.dpr) return;
   const k = Math.min(cssW / ARENA.width, cssH / VIEW_MIN_H);
   const w = cssW / k, h = cssH / k;
   const aspect = cssW / cssH;
@@ -293,7 +297,15 @@ function applyViewTransform() {
   const s = VIEW.k * VIEW.dpr;
   ctx.setTransform(s, 0, 0, s, -VIEW.x0 * s, -VIEW.y0 * s);
 }
-window.addEventListener('resize', resizeCanvas);
+// Раунд 17: пачка resize (адресная строка/панели телефона ведут анимацию высоты
+// десятки событий подряд) схлопывается в один пересчёт через RESIZE_SETTLE_MS
+// после последнего события — иначе каждый шаг запекал новый фон (2 слоя ~6 МБ).
+const RESIZE_SETTLE_MS = 140;
+let resizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { resizeTimer = 0; resizeCanvas(); }, RESIZE_SETTLE_MS);
+});
 
 // ---------------------------------------------------------------- фон (раунд 14 → 15)
 // Всё статичное (небо, горы, дымка, земля с тропой, крап, камни, трава)
@@ -859,6 +871,13 @@ function bakeLand(age, rect, s, variant) {
 // по 2 слоя на 4K-экране иначе съели бы сотни мегабайт.
 const BG_PAD = 10;
 const bgCache = new Map();
+const BG_CACHE_MAX = 4;
+// Обнуление размера canvas возвращает его растровую память сразу (не по GC).
+// Слой, который ещё рисуется как match.bg/bgPrev, не освобождаем.
+function releaseBg(bg) {
+  if (!bg || (typeof match !== 'undefined' && match && (match.bg === bg || match.bgPrev === bg))) return;
+  for (const c of [bg.sky, bg.land]) { if (c) { c.width = 0; c.height = 0; } }
+}
 function viewBgRect() {
   return { x: VIEW.x0 - BG_PAD, y: VIEW.y0 - BG_PAD, w: VIEW.w + BG_PAD * 2, h: VIEW.h + BG_PAD * 2 };
 }
@@ -873,7 +892,11 @@ function bakeArenaBackground(age, variant) {
   if (bg) { bgCache.delete(key); bgCache.set(key, bg); return bg; }
   bg = { ageId: age.id, vkey, rev: VIEW.rev, rect, sky: bakeSky(age, rect, s, variant), land: bakeLand(age, rect, s, variant) };
   bgCache.set(key, bg);
-  while (bgCache.size > 5) bgCache.delete(bgCache.keys().next().value);
+  // Раунд 17 (краш на мобильном, память): слои прошлого размера кадра (rev)
+  // уже не нужны — освобождаем сразу, а не ждём вытеснения; LRU 5 → 4.
+  // Запись с rev, равным текущему, держится не больше BG_CACHE_MAX.
+  for (const [k, v] of bgCache) if (v.rev !== VIEW.rev) { releaseBg(v); bgCache.delete(k); }
+  while (bgCache.size > BG_CACHE_MAX) { const k = bgCache.keys().next().value; releaseBg(bgCache.get(k)); bgCache.delete(k); }
   return bg;
 }
 // Прогрев эпох, до которых игрок может дорасти в этой миссии, — в простое,
@@ -1078,6 +1101,10 @@ function showScreen(name) {
   // переход на/с экрана боя, включая паузу/меню/итог, no-op на других
   // площадках (проверка kind — внутри PLATFORM.setGameplayActive()).
   PLATFORM.setGameplayActive(name === 'match');
+  // Раунд 17: пульс боя для журнала сбоев (js/crashlog.js) — пауза/справка
+  // посреди боя пульс не останавливают, выход в меню/итог — останавливают.
+  if (name === 'match') CRASHLOG.startHeartbeat();
+  else if (name !== 'paused' && name !== 'help') CRASHLOG.stopHeartbeat();
   // Отсчёт 3…2…1 (раунд 5) сам прячется только когда update() успевает
   // досчитать до конца — если экран сменился раньше (пауза/выход во время
   // отсчёта), оверлей иначе застревал видимым поверх всех следующих
@@ -1681,6 +1708,7 @@ DOM.btnShopFromResult.addEventListener('click', () => { SFX.click(); renderShop(
 // раза в 3 минуты. Отсчёт идёт от загрузки игры и сбрасывается любым
 // показанным роликом, включая рекламу за награду.
 const INTERSTITIAL_COOLDOWN_MS = 180000;
+const AD_COOLDOWN_LOCK_MS = 8000; // пауза кнопки бонуса после «ролик ещё не готов» (Яндекс: пауза между показами)
 const AD_RECHECK_INTERVAL_MS = 4000;
 const AD_RECHECK_MAX_ATTEMPTS = 8;
 let lastAdShownAt = Date.now();
@@ -3389,16 +3417,29 @@ function renderResultAdRow(earnedDiamonds, isChapterFinal) {
       btn.addEventListener('click', () => {
         btn.disabled = true;
         btn.textContent = plainLabel(I18N.t('result.adLoading'));
-        PLATFORM.showRewardedVideo().then((rewarded) => {
-          if (rewarded) {
+        // ТЗ 01.10.2026: бонус — ТОЛЬКО за реально показанную рекламу
+        // (PLATFORM.showBonusAd → shown), без пути «ошибка = бесплатно».
+        // adblock/ошибка SDK — «отключите блокировщик», бонус не выдан;
+        // пауза между показами/нет объявления — мягкое сообщение и короткая
+        // блокировка кнопки (AD_COOLDOWN_LOCK_MS), чтобы не спамить SDK.
+        PLATFORM.showBonusAd().then((res) => {
+          if (res && res.shown === true) {
             lastAdShownAt = Date.now();
             onGranted();
             saveProgress(progress);
             btn.textContent = I18N.t('result.adGranted', { amount });
+          } else if (res && res.reason === 'cooldown') {
+            showLoudNotice(I18N.t('result.adCooldownNotice'));
+            setTimeout(() => { if (btn.isConnected) { btn.disabled = false; setLabel(); } }, AD_COOLDOWN_LOCK_MS);
+            btn.textContent = plainLabel(I18N.t('result.adLoading'));
+          } else if (res && res.reason === 'closed') {
+            // ролик открылся, игрок закрыл без награды — бонуса нет, ругаться не за что
+            btn.disabled = false;
+            setLabel();
           } else {
             btn.disabled = false;
             setLabel();
-            showLoudNotice(I18N.t('result.adUnavailableNotice'));
+            showLoudNotice(I18N.t('result.adBlockedNotice'));
           }
         });
       });
@@ -3650,8 +3691,59 @@ let lastTime = performance.now();
 const STEP = 1 / 60;
 let acc = 0;
 
+// Раунд 17 (краш на мобильном, миссия 9): исключение в update()/render() раньше
+// обрывало requestAnimationFrame-цикл навсегда — игра застывала чёрным кадром,
+// для игрока это «краш». Теперь кадр под try/catch: цикл живёт всегда, сбой
+// пишется в CRASHLOG; если кадры падают подряд FRAME_ERR_LIMIT раз (состояние
+// боя испорчено) — игрок возвращается в меню с сообщением, прогресс цел.
+CRASHLOG.setProvider(() => ({
+  screen, mission: match ? match.mission.id : 0, sec: match ? Math.round(match.elapsed) : 0,
+  units: match ? match.world.units.length : 0, corpses: match && match.corpses ? match.corpses.length : 0,
+  particles: match && match.particles ? match.particles.length : 0,
+  frameMs: Math.round(PERF.ema), perfLevel: PERF.level, bgCache: bgCache.size,
+}));
+const FRAME_ERR_LIMIT = 30;
+let frameErrors = 0;
 function frame(now) {
+  try {
+    frameStep(now);
+    frameErrors = 0;
+  } catch (e) {
+    frameErrors++;
+    if (frameErrors === 1 || frameErrors === FRAME_ERR_LIMIT) CRASHLOG.record('frame', e, { n: frameErrors });
+    if (frameErrors >= FRAME_ERR_LIMIT) {
+      frameErrors = 0;
+      acc = 0;
+      try { showScreen('menu'); showLoudNotice(I18N.t('err.crashRecovered')); } catch (e2) { CRASHLOG.record('recover', e2); }
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+// Защита по производительности (раунд 17): сглаженное время кадра. Если на
+// слабом телефоне кадр затянулся (бой с толпой) — отключаем дорогую
+// детализацию: частиц меньше, упрощённые костюмы при меньшем числе фигур.
+// Уровни: 0 — как раньше; 1 (кадр > 30 мс) — лимит частиц 160, «lite» с 16
+// фигур; 2 (> 45 мс) — лимит частиц 60, «lite» с 8 фигур. Откат — на уровень
+// ниже, когда кадр держится < 24 мс не меньше 6 с. Геймплей не затрагивается
+// (только отрисовка), шаг симуляции фиксирован.
+const PERF = { ema: 16.7, level: 0, since: 0, lite: [28, 16, 8], cap: [0, 160, 60] };
+function setPerfLevel(level, now) {
+  PERF.level = level;
+  PERF.since = now;
+  VFX.setCap(PERF.cap[level] || VFX.capDefault);
+  try { if (typeof Analytics !== 'undefined' && level > 0) Analytics.track('perf_level_' + level, { sec: match ? Math.round(match.elapsed) : 0 }); } catch (e) { /* пусто */ }
+}
+function perfTick(rawMs, now) {
+  if (!(rawMs > 0) || rawMs > 1000) return; // возврат вкладки / реклама — не нагрузка
+  PERF.ema += (rawMs - PERF.ema) * 0.06;
+  const want = PERF.ema > 45 ? 2 : PERF.ema > 30 ? 1 : 0;
+  if (want > PERF.level && now - PERF.since > 1200) setPerfLevel(want, now);
+  else if (want < PERF.level && PERF.ema < 24 && now - PERF.since > 6000) setPerfLevel(PERF.level - 1, now);
+}
+function frameStep(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
+  if (screen === 'match') perfTick(now - lastTime, now);
   lastTime = now;
   if (helpTipEl && screen !== 'match') hideHelpTip(); // r15 И11: тост помощи — только в бою
   // Реклама за вознаграждение (Яндекс/VK) обязана ставить игровой процесс
@@ -3660,7 +3752,7 @@ function frame(now) {
   // pageHidden — та же пауза цикла, что и на рекламе (см. onVisibilityChange
   // выше): фоновая вкладка не должна досчитывать бой/анимации, пока
   // невидима игроку (модерация, п.1.3).
-  if (adPlaying || pageHidden) { requestAnimationFrame(frame); return; }
+  if (adPlaying || pageHidden) return;
   if (screen === 'match') {
     // Раунд 15 (И4): хит-стоп — логика стоит (время в acc не копится),
     // рендер идёт; фиксированный шаг и паузы площадок не затрагиваются.
@@ -3690,7 +3782,6 @@ function frame(now) {
     render();
   }
   Tutorial.tick(match, screen, dt); // раунд 15 (И4): стрелки туториала миссии 1
-  requestAnimationFrame(frame);
 }
 const INTRO_COUNTDOWN_SEC = 1.5; // раунд 15 (И4): отсчёт первого захода «3-2-1» — 1.5 с вместо 3
 
@@ -3993,7 +4084,10 @@ function render() {
     const ageChanged = match.bg && match.bg.ageId !== age.id && match.bg.rev === VIEW.rev;
     match.bgPrev = ageChanged ? match.bg : null;
     match.bgFadeT0 = nowMs;
+    const oldBg = match.bg;
     match.bg = bakeArenaBackground(age, bgVar);
+    // Раунд 17: слой прошлого размера кадра, вытесненный из кэша, не копим.
+    if (oldBg && oldBg !== match.bg && oldBg !== match.bgPrev && oldBg.rev !== VIEW.rev) releaseBg(oldBg);
     if (!match.bgWarmed) { match.bgWarmed = true; prewarmAgeBackgrounds(match.mission); }
   }
   const fadeA = match.bgPrev ? 1 - (nowMs - match.bgFadeT0) / 800 : 0;
@@ -4088,7 +4182,7 @@ function render() {
     }
   };
   // И6: в толпе (>28 фигур) — упрощённая детализация костюмов (RIG_LOD, rig.js)
-  RIG_LOD.lite = match.world.units.length + match.corpses.length > 28;
+  RIG_LOD.lite = match.world.units.length + match.corpses.length > PERF.lite[PERF.level];
   // И9: порядок по глубине — тела (лежат на земле) по рядам, затем живые по
   // рядам, дальний ряд раньше; герой — в своём ряду (UNIT_LANES.heroLane),
   // бойцы ближнего ряда проходят перед ним. Сортировка стабильна.
@@ -4100,7 +4194,7 @@ function render() {
   for (; li < living.length && laneOf(living[li]) <= UNIT_LANES.heroLane; li++) drawUnitFigure(living[li], null);
   RIG_LOD.lite = false;
   drawHeroFigure();
-  RIG_LOD.lite = living.length + match.corpses.length > 28;
+  RIG_LOD.lite = living.length + match.corpses.length > PERF.lite[PERF.level];
   for (; li < living.length; li++) drawUnitFigure(living[li], null);
   RIG_LOD.lite = false;
   function drawHeroFigure() {
@@ -4794,7 +4888,9 @@ function drawMenuScene(now) {
   });
 }
 function menuSceneLoop(now) {
-  if (MENU_SCENE_SCREENS.has(screen) && !pageHidden && !adPlaying) drawMenuScene(now);
+  try {
+    if (MENU_SCENE_SCREENS.has(screen) && !pageHidden && !adPlaying) drawMenuScene(now);
+  } catch (e) { CRASHLOG.record('menuScene', e); } // раунд 17: цикл меню не должен обрываться
   requestAnimationFrame(menuSceneLoop);
 }
 requestAnimationFrame(menuSceneLoop);

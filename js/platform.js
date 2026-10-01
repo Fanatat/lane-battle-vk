@@ -357,6 +357,12 @@ const PLATFORM = (() => {
   detect();
 
   // ---- реклама за вознаграждение ------------------------------------
+  // Dev-режим заглушки рекламы: только страница, открытая локально
+  // (localhost / 127.0.0.1 / file:). Ни в какой хостинг-сборке (стенд, ВК,
+  // Яндекс, CG) заглушки нет — правило 2 ТЗ 01.10.2026 «бесплатного режима нет».
+  const DEV_ADS = (() => {
+    try { return ['localhost', '127.0.0.1', '[::1]', ''].includes(location.hostname); } catch (e) { return false; }
+  })();
   function showTestAd() {
     return new Promise((resolve) => {
       pauseHook();
@@ -376,18 +382,26 @@ const PLATFORM = (() => {
       }, 2200);
     });
   }
-  function showYandexRewarded() {
+  // Итог — {shown, reason}: shown ТОЛЬКО после onRewarded. reason при неудаче:
+  // 'blocked' (onError / нет SDK / исключение / молчание SDK до открытия —
+  // adblock, сбой) и 'closed' (ролик открылся, игрок закрыл без награды —
+  // уведомления не нужно).
+  function showYandexRewardedResult() {
     return new Promise((resolve) => {
-      if (!ysdk || !ysdk.adv) { resolve(false); return; }
-      let rewarded = false;
-      ysdk.adv.showRewardedVideo({
-        callbacks: {
-          onOpen: () => { pauseHook(); },
-          onRewarded: () => { rewarded = true; },
-          onClose: () => { resumeHook(); resolve(rewarded); },
-          onError: () => { resumeHook(); resolve(false); },
-        },
-      });
+      if (!ysdk || !ysdk.adv) { resolve({ shown: false, reason: 'blocked' }); return; }
+      let rewarded = false, opened = false, settled = false;
+      const finish = (shown, reason) => { if (settled) return; settled = true; clearTimeout(guard); resumeHook(); resolve({ shown, reason }); };
+      const guard = setTimeout(() => { if (!opened) finish(false, 'blocked'); }, INTERSTITIAL_TIMEOUT_MS * 4);
+      try {
+        ysdk.adv.showRewardedVideo({
+          callbacks: {
+            onOpen: () => { opened = true; pauseHook(); },
+            onRewarded: () => { rewarded = true; },
+            onClose: () => { rewarded ? finish(true, 'ok') : finish(false, opened ? 'closed' : 'blocked'); },
+            onError: () => { finish(false, 'blocked'); },
+          },
+        });
+      } catch (e) { finish(false, 'blocked'); }
     });
   }
   // use_waterfall — официальное поле vk-bridge (snake_case, см. типы пакета
@@ -430,24 +444,39 @@ const PLATFORM = (() => {
       .catch(() => false)
       .then((shown) => { resumeHook(); return shown; });
   }
-  function showYandexInterstitial() {
+  // Яндекс: полноэкранная реклама, итог — {shown, reason}. «Показано» — только
+  // onClose(wasShown === true). reason при неудаче:
+  //  • 'blocked'  — onError/onOffline/нет ysdk.adv/исключение SDK/молчание SDK
+  //    (adblock, сбой сети, площадка недоступна) → игроку «отключите блокировщик»;
+  //  • 'cooldown' — onClose(false) без ошибки: SDK не показал ролик из-за паузы
+  //    между показами или отсутствия подходящего объявления → мягкое «ещё
+  //    готовится, повторите через несколько секунд». И то и другое — НЕ показ.
+  function showYandexFullscreen() {
     return new Promise((resolve) => {
-      if (!ysdk || !ysdk.adv) { resolve(false); return; }
+      if (!ysdk || !ysdk.adv) { resolve({ shown: false, reason: 'blocked' }); return; }
       let settled = false;
-      const finish = (shown) => { if (settled) return; settled = true; resumeHook(); resolve(shown); };
+      const finish = (shown, reason) => { if (settled) return; settled = true; resumeHook(); resolve({ shown, reason }); };
       // Если SDK не ответил ни одним колбэком — игра не должна застрять.
-      const guard = setTimeout(() => finish(false), INTERSTITIAL_TIMEOUT_MS * 4);
-      ysdk.adv.showFullscreenAdv({
-        callbacks: {
-          onOpen: () => { clearTimeout(guard); pauseHook(); },
-          onClose: (wasShown) => { clearTimeout(guard); finish(!!wasShown); },
-          onError: () => { clearTimeout(guard); finish(false); },
-          onOffline: () => { clearTimeout(guard); finish(false); },
-        },
-      });
+      const guard = setTimeout(() => finish(false, 'blocked'), INTERSTITIAL_TIMEOUT_MS * 4);
+      try {
+        ysdk.adv.showFullscreenAdv({
+          callbacks: {
+            onOpen: () => { clearTimeout(guard); pauseHook(); },
+            onClose: (wasShown) => { clearTimeout(guard); finish(!!wasShown, wasShown ? 'ok' : 'cooldown'); },
+            onError: () => { clearTimeout(guard); finish(false, 'blocked'); },
+            onOffline: () => { clearTimeout(guard); finish(false, 'blocked'); },
+          },
+        });
+      } catch (e) { clearTimeout(guard); finish(false, 'blocked'); }
     });
   }
-  // По семантике совпадает с showYandexRewarded()/showVkRewarded() выше —
+  function showYandexInterstitial() { return showYandexFullscreen().then((r) => r.shown); }
+  // Раунд 2 (решение основателя 01.10.2026): interstitial за бонус ОТМЕНЁН —
+  // правила ВК/Яндекса не дают показывать его по кнопке. Rewarded везде;
+  // interstitial-путь Яндекса сохранён, но выключен флагом.
+  const BONUS_AD_INTERSTITIAL_YANDEX = false;
+  function bonusAdFormat() { return kind === 'yandex' && BONUS_AD_INTERSTITIAL_YANDEX ? 'interstitial' : 'rewarded'; }
+  // По семантике совпадает с showYandexRewardedResult()/showVkRewarded() выше —
   // та же кнопка "реклама"+награда, та же опциональность, пауза на весь
   // запрос до adFinished ИЛИ adError (ТЗ_CRAZYGAMES_ИНТЕГРАЦИЯ.md, п.3).
   // Midgame — НЕ реализуется (решение основателя, см. КОНЦЕПТ_ГДД.md).
@@ -691,15 +720,29 @@ const PLATFORM = (() => {
       if (active) window.CrazyGames.SDK.game.gameplayStart();
       else window.CrazyGames.SDK.game.gameplayStop();
     },
-    showRewardedVideo() {
-      const p = kind === 'yandex' ? showYandexRewarded()
-        : kind === 'vk' ? showVkRewarded()
-        : kind === 'crazygames' ? showCrazyGamesRewarded()
-        : showTestAd();
+    // Формат рекламы за бонус («Смотреть рекламу → бонус»): rewarded на всех
+    // площадках (раунд 2, решение основателя 01.10.2026: правила ВК/Яндекса не
+    // дают показывать interstitial по кнопке; ВК: interstitial «только в момент
+    // перехода от одного экрана к другому»). Interstitial Яндекса — под флагом
+    // BONUS_AD_INTERSTITIAL_YANDEX (выключен).
+    bonusAdFormat,
+    // Бонус за рекламу: Promise<{shown, reason}>, не бросает. shown === true
+    // ТОЛЬКО если SDK площадки подтвердил показ (Яндекс: onRewarded; ВК: result; CG: adFinished). reason при shown=false:
+    // 'blocked' (adblock/ошибка/нет SDK) | 'cooldown' (пауза/нет объявления).
+    // Бесплатной ветки нет: без SDK (kind 'none': adblock убил sdk.js, чужой
+    // домен, стенд вне iframe ВК) бонус не выдаётся. Заглушка showTestAd —
+    // только для локальной разработки (DEV_ADS: localhost/127.0.0.1/file:).
+    showBonusAd() {
+      let p;
+      if (kind === 'yandex') p = bonusAdFormat() === 'interstitial' ? showYandexFullscreen() : showYandexRewardedResult();
+      else if (kind === 'vk') p = showVkRewarded().then((ok) => ({ shown: ok, reason: ok ? 'ok' : 'blocked' }));
+      else if (kind === 'crazygames') p = showCrazyGamesRewarded().then((ok) => ({ shown: ok, reason: ok ? 'ok' : 'blocked' }));
+      else if (DEV_ADS) p = showTestAd().then((ok) => ({ shown: ok, reason: ok ? 'ok' : 'blocked' }));
+      else p = Promise.resolve({ shown: false, reason: 'blocked' });
       // Воронка (js/analytics.js, раунд 15): итог ролика — ad_reward_ok/fail.
-      return p.then((ok) => {
-        try { if (typeof Analytics !== 'undefined') Analytics.adReward(!!ok); } catch (e) { /* аналитика не ломает рекламу */ }
-        return ok;
+      return p.then((r) => {
+        try { if (typeof Analytics !== 'undefined') Analytics.adReward(!!r.shown); } catch (e) { /* аналитика не ломает рекламу */ }
+        return r;
       });
     },
     // true/false — площадка умеет проверять заранее, результат достоверен;

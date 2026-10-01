@@ -62,6 +62,14 @@ const BOOT = (() => {
           '  ' + String(Math.round(r.duration)).padStart(6) + ' мс  ' + kb.padStart(7) + '  ' + shortName(r.name));
       });
     }
+    try {
+      const cl = typeof CRASHLOG !== 'undefined' ? CRASHLOG.read() : [];
+      if (cl.length) {
+        lines.push('');
+        lines.push('Журнал сбоев (CRASHLOG, последние ' + cl.length + '):');
+        cl.forEach((c) => lines.push('  ' + c.t + ' ' + c.kind + ' ' + c.msg + ' ' + JSON.stringify(c.state).slice(0, 220)));
+      }
+    } catch (e) { /* журнал не мешает отчёту */ }
     return lines.join('\n');
   }
 

@@ -7,10 +7,10 @@
 'use strict';
 
 const VFX = (() => {
-  const CAP = (typeof ART !== 'undefined' && ART.particleCap) || 400;
+  let CAP = (typeof ART !== 'undefined' && ART.particleCap) || 400;
 
   function push(m, p) {
-    if (m.particles.length >= CAP) m.particles.shift(); // старейшая уступает место
+    while (m.particles.length >= CAP) m.particles.shift(); // старейшая уступает место
     m.particles.push(p);
   }
 
@@ -588,6 +588,9 @@ const VFX = (() => {
 
   return {
     dressUp, fortRebuild, // раунд 15 (И6)
+    // Раунд 17: защита по производительности (game.js, PERF) — потолок частиц.
+    setCap(n) { CAP = Math.max(20, n | 0); },
+    capDefault: CAP,
     spawn, burst, update, draw, floater, drawProjectile, heroSpecial, cry, pickaxe, meleeHit, coreHit, unitDeath, heroKill, impact, structureDown, drawVolley, volleyImpact, ageUp,
     damageNumber, heroHit, fortressDestroyed, fortressAftershock, smokePuff, // раунд 15 (И4)
   };
